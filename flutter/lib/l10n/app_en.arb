@@ -1,0 +1,11 @@
+{
+  "helloWorld": "Hello World!",
+  "@helloWorld": {
+    "description": "The conventional newborn programmer greeting"
+  },
+  "homePageTitle": "Matitsa Srpska",
+  "@homePageTitle": {
+    "description": "The title of the home page"
+  },
+  "searchFieldHint": "Search"
+}
