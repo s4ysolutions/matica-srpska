@@ -421,7 +421,32 @@ class Entry:
         return f'Entry("{self.headword}", "{self.definition}", {self.page_no})'
 
     def txt(self, headword_separator=' '):
-        return f'{self.headword}{headword_separator}{self.definition}'
+        return f'{self.headword}{headword_separator}{self.definition}{headword_separator}{self.page_no}'
+
+
+class PdfDecoderForFile():
+    def __init__(self, pdf_file):
+        self.pdf_file = pdf_file
+
+    def each(self, lmbda, debug=True):
+        with pikepdf.open(self.pdf_file) as pdf:
+            prev_entries = []
+            for n, page in enumerate(pdf.pages, start=1):
+                if n < 17:
+                    continue
+                if n > 1529:
+                    break
+                if (debug and page["/Resources"].get("/Font", None) is None):
+                    print(f"No fonts found in page resources for page: {n}", file=sys.stderr)
+                    continue
+                decoder = PdfDecoderForPage(page, n, fixes, typos)
+                entries = decoder.convert_to_entries(prev_entries)
+                if debug:
+                    print(f"Page {n}: {entries[0].headword}", file=sys.stderr)
+                prev_entries = entries
+                for entry in entries:
+                    if entry.headword or entry.definition:
+                        lmbda(entry)
 
 
 def bytes2cid(b):
@@ -535,46 +560,67 @@ typos = {
     # }
 }
 
-# matica_pdf = os.path.join(os.path.dirname(__file__), 'matica/matica-cutoff.pdf')
-# with pikepdf.open(matica_pdf) as pdf:
-#    page = pdf.pages[0]
-#    decoder = PdfDecoderForPage(page, fixes, typos)
-#    #decoder.debug_text()
-#    print(''.join([(a.is_first and "\n" or "") + a.text for a in decoder.convert_to_text()]))
-#    page = pdf.pages[1]
-#    decoder = PdfDecoderForPage(page, fixes, typos)
-#    #decoder.debug_text()
-#    print(''.join([(a.is_first and "\n" or "") + a.text for a in decoder.convert_to_text()]))
-#    exit(0)
-
 if __name__ == '__main__':
     import argparse
     import sys
 
     parser = argparse.ArgumentParser(description='Парсер за Матицу Српску')
 
+    parser.add_argument('--debug', action='store_true',
+                        help='Приказивање дебаг информација')
     parser.add_argument('--full-search-txt', action='store_true',
                         help='Екстракција свих страна из PDF-а у текстуални фајл')
+    parser.add_argument('--full-search-csv', action='store_true',
+                        help='Екстракција свих страна из PDF-а у SCV фајл')
+    parser.add_argument('--mongodb-connection-string', default=None,
+                        help='Екстракција свих страна из PDF-а у mongodb')
 
     args = parser.parse_args()
-    if args.full_search_txt:
-        matica_pdf = os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf')
-        with pikepdf.open(matica_pdf) as pdf:
-            prev_entries = []
-            for n, page in enumerate(pdf.pages, start=1):
-                if n < 17:
-                    continue
-                if n > 1529:
-                    break
-                if (page["/Resources"].get("/Font", None) is None):
-                    print(f"No fonts found in page resources for page: {n}", file=sys.stderr)
-                    continue
-                decoder = PdfDecoderForPage(page, n, fixes, typos)
-                entries = decoder.convert_to_entries(prev_entries)
-                print(''.join([a.txt('|') + "\n" for a in prev_entries]))
-                print(f"Page {n}: {entries[0].headword}", file=sys.stderr)
-                prev_entries = entries
-            print(''.join([a.txt('|') + "\n" for a in prev_entries]))
+    if args.full_search_txt or args.full_search_csv or args.mongodb_connection_string:
+        convertor = PdfDecoderForFile(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf'))
+        if args.full_search_txt:
+            convertor.each(lambda entry: print(entry.txt), args.debug)
+        if args.full_search_csv:
+            print("headword\tdefinition\tpage")
+            convertor.each(lambda entry: print(entry.txt('\t')), args.debug)
+        if args.mongodb_connection_string:
+            from pymongo import MongoClient
+
+            client = MongoClient(args.mongodb_connection_string)
+            db = client.matica
+            collection = db.entries
+            collection.drop()
+            collection = db.create_collection(
+                'entries',
+                validator={
+                    '$jsonSchema': {
+                        'bsonType': 'object',
+                        'required': ['headword', 'definition', 'page'],
+                        'properties': {
+                            'headword': {
+                                'bsonType': 'string',
+                                'description': 'must be a string and is required'
+                            },
+                            'definition': {
+                                'bsonType': 'string',
+                                'description': 'must be a string and is required'
+                            },
+                            'page': {
+                                'bsonType': 'string',
+                                'description': 'must be a int and is required'
+                            }
+                        }
+                    }
+                }
+            )
+            def process_entries(entry):
+                # Insert into MongoDB collection
+                collection.insert_one({
+                    'headword': entry.headword,
+                    'definition': entry.definition,
+                    'page': str(entry.page_no)  # Ensure page_no is converted to a string
+                })
+            convertor.each(process_entries, args.debug)
         exit(0)
 
     matica_pdf = os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf')
