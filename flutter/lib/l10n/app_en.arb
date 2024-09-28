@@ -1,8 +1,6 @@
 {
-  "helloWorld": "Hello World!",
-  "@helloWorld": {
-    "description": "The conventional newborn programmer greeting"
-  },
+  "dictionaryReady": "",
+  "initializeDictionary": "Dictionary initializing",
   "homePageTitle": "Matitsa Srpska",
   "@homePageTitle": {
     "description": "The title of the home page"

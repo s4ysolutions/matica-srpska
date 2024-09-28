@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
-import 'ui/homePage/main.dart';
+import 'flutter/ui/homePage/main.dart';
 
 void main() {
   runApp(const MyApp());
@@ -12,6 +12,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    print("MyApp build");
     return MaterialApp(
         title: 'Flutter Demo',
         localizationsDelegates: AppLocalizations.localizationsDelegates,

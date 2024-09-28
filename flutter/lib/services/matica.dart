@@ -1,31 +1,89 @@
-import 'dart:math';
+import 'dart:async';
 
-import 'package:english_words/english_words.dart';
-import 'package:lorem_ipsum/lorem_ipsum.dart';
+import 'package:equatable/equatable.dart';
+import 'package:matica/data_layer/dictionary.dart';
+import 'package:rxdart/rxdart.dart';
 
-class MaticaEntry {
-  final String headword;
-  final String description;
+sealed class DictionaryFilter extends Equatable {
+  final String pattern;
 
-  const MaticaEntry({required this.headword, required this.description});
+  @override
+  List<Object> get props => [pattern];
+
+  const DictionaryFilter(this.pattern);
 }
 
-class MaticaDictionary{
-  Future<void> init() async{
-    return Future.delayed(const Duration(seconds: 1));
+class DictionaryNoFilter extends DictionaryFilter {
+  static const DictionaryNoFilter instance = DictionaryNoFilter._();
+
+  const DictionaryNoFilter._() : super('');
+}
+
+class DictionaryPrefixFilter extends DictionaryFilter {
+  const DictionaryPrefixFilter(super.pattern);
+}
+
+class SearchResults extends Equatable {
+  static const SearchResults empty =
+      SearchResults(DictionaryNoFilter.instance, []);
+  final DictionaryFilter filter;
+  final List<DictionaryEntry> entries;
+
+  const SearchResults(this.filter, this.entries);
+  @override
+  List<Object?> get props => [filter, entries];
+}
+
+enum MaticaSearchState {
+  uninitialized,
+  idle,
+  searching,
+}
+
+// This service is intentionally overcomplicated
+// with stream-based API to experiment with
+// streams
+class MaticaService {
+  final DictionaryProvider _dictionary;
+  final StreamController<SearchResults> _searchResultsController =
+      StreamController<SearchResults>.broadcast();
+  final StreamController<MaticaSearchState> _searchStateController =
+      BehaviorSubject<MaticaSearchState>.seeded(
+          MaticaSearchState.uninitialized);
+
+  // it is not conventional API to provide search results as a stream
+  // they are here just for fun
+  Stream<SearchResults> get searchResultsStream =>
+      _searchResultsController.stream;
+
+  Stream<MaticaSearchState> get searchStateStream =>
+      _searchStateController.stream;
+
+  // MaticaSearchState get searchState => _searchStateController.value;
+
+  MaticaService(this._dictionary);
+
+  void addFilter(DictionaryFilter filter) {
+    _searchStateController.add(MaticaSearchState.searching);
+    final Future<List<DictionaryEntry>> resultsFuture = switch (filter) {
+      DictionaryPrefixFilter(pattern: final pattern) =>
+        _dictionary.getEntriesByHeadwordBegin(pattern),
+      DictionaryNoFilter() => Future.value(List<DictionaryEntry>.empty()),
+    };
+    resultsFuture.then((results) {
+      _searchResultsController.add(SearchResults(filter, results));
+      _searchStateController.add(MaticaSearchState.idle);
+    });
   }
 
-  Future<List<MaticaEntry>> getEntriesByHeadwordPattern(String pattern) async{
-    final random = Random();
-    int nResults = random.nextInt(11);
-    final results = <MaticaEntry>[];
-    for (var i = 3; i < nResults; i++) {
-      await Future.delayed(const Duration(milliseconds: 100));
-      String description = loremIpsum(words: 5+random.nextInt(20));
-      results.add(MaticaEntry(
-          headword: WordPair.random().asString,
-          description: description));
-    }
-    return results;
+  Future<void> destroy() async {
+    await _dictionary.destroy();
+    _searchResultsController.close();
+    _searchStateController.close();
+  }
+
+  Future<void> init() async {
+    await _dictionary.init();
+    _searchStateController.add(MaticaSearchState.idle);
   }
 }

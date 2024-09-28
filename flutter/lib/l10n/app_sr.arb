@@ -1,3 +1,5 @@
 {
-  "homePageTitle": "Матица Српска"
+  "homePageTitle": "Матица Српска",
+  "searchFieldHint": "Претрага",
+  "initializeDictionary": "Иницијализација речника"
 }

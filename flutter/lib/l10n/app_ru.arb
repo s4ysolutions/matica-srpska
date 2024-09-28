@@ -1,6 +1,5 @@
 {
   "homePageTitle": "Матица Српска",
-  "@homePageTitle": {
-    "description": "The title of the home page"
-  }
+  "searchFieldHint": "Поиск",
+  "initializeDictionary": "Инициализация словаря"
 }
