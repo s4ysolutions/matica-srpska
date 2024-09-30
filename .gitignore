@@ -2,3 +2,5 @@ pdfservices-api-credentials.json
 matica.iml
 convertor/matica/matica-full.pdf
 .venv
+mongodb
+matica-srpska-sy4-firebase-adminsdk*.json

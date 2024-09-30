@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:provider/provider.dart';
 
-import '../../bloc/matica_bloc.dart';
+import '../../../services/matica.dart';
 
 class SearchField extends StatelessWidget {
   const SearchField({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final searchBlock = context.read<MaticaBloc>();
+    final maticaService = Provider.of<MaticaService>(context);
     return TextField(
       decoration: InputDecoration(
         hintText: AppLocalizations.of(context)?.searchFieldHint,
@@ -18,10 +18,16 @@ class SearchField extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
         ),
       ),
-      onChanged: (value) {
-        print("onChanged: $value");
-        searchBlock.add(MaticaSearchHeadwordPrefix(value));
-      },
+      onChanged: (value) =>
+          maticaService.setFilter(DictionaryPrefixFilter(value)).catchError(
+        (e, s) {
+          FlutterError.reportError(FlutterErrorDetails(
+            exception: e,
+            stack: s,
+          ));
+          return MaticaSearchResults.empty;
+        },
+      ),
     );
   }
 }

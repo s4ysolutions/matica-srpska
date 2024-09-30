@@ -6,6 +6,9 @@ import 'package:lorem_ipsum/lorem_ipsum.dart';
 import 'dictionary.dart';
 
 class DictionaryRandomProvider implements DictionaryProvider {
+
+  const DictionaryRandomProvider();
+
   @override
   Future<void> init() async {
     return Future.delayed(const Duration(seconds: 1));

@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:matica/data_layer/dictionary.dart';
-import 'package:matica/flutter/bloc/matica_bloc.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
-
+import 'package:logger/logger.dart';
+import 'package:matica/services/matica.dart';
+import 'package:provider/provider.dart';
 
 class SearchResultsField extends StatelessWidget {
   const SearchResultsField({super.key});
 
   @override
   Widget build(BuildContext context) {
-    print("SearchResultsField build");
-    return BlocBuilder<MaticaBloc, MaticaState> (
-      builder: (context, state){
-        print("MaticaBloc listener: state=$state, results=${state.results}");
+    Logger logger = Provider.of<Logger>(context);
+    logger.d("SearchResultsField build");
+    return Consumer<MaticaSearchState>(
+      builder: (context, state, _) {
         final l10n = AppLocalizations.of(context)!;
-        return switch(state) {
-          MaticaNotReady() => Center(child: Text(l10n.initializeDictionary)),
-          MaticaReady() => SearchResultsList(entries: state.results),
-          MaticaSearching() => Center(child: LinearProgressIndicator()),
-          MaticaHasResults() => SearchResultsList(entries: state.results),
+        return switch (state) {
+          MaticaSearchState.uninitialized =>
+            Center(child: Text(l10n.initializeDictionary)),
+          MaticaSearchState.idle => SearchResultsList(),
+          MaticaSearchState.searching =>
+            Center(child: LinearProgressIndicator()),
+          MaticaSearchState.error => SearchResultsList(),
         };
       },
     );
@@ -27,24 +28,25 @@ class SearchResultsField extends StatelessWidget {
 }
 
 class SearchResultsList extends StatelessWidget {
-  final List<DictionaryEntry> _entries;
-  SearchResultsList({super.key, required List<DictionaryEntry> entries})
-    : _entries = entries {
-    print("SearchResultsList constructor: entries=$entries");
-  }
+  const SearchResultsList({super.key});
 
   @override
   Widget build(BuildContext context) {
-    print("SearchResultsList build: entries=$_entries");
+    Logger logger = Provider.of<Logger>(context);
+    logger.d("SearchResultsList build");
 
-    return ListView.builder(
-      itemCount: _entries.length,
-      itemBuilder: (context, index) {
-        return ListTile(
-          title: Text(_entries[index].headword),
-          subtitle: Text(_entries[index].definition),
-        );
-      },
-    );
+    return Consumer<MaticaSearchResults>(
+        builder: (context, results, _) => ListView.builder(
+              itemCount: results.entries.length,
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(
+                    results.entries[index].headword,
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(results.entries[index].definition),
+                );
+              },
+            ));
   }
 }

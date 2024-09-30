@@ -63,13 +63,13 @@ void main() {
 
     final futureSearchResults = expectLater(
         service.searchResultsStream,
-        emits(SearchResults(DictionaryPrefixFilter("pattern"), [
+        emits(MaticaSearchResults(DictionaryPrefixFilter("pattern"), [
           DictionaryEntry(headword: "headword", definition: "description")
         ]))).timeout(const Duration(milliseconds: 500));
 
     // Act
     await service.init();
-    service.addFilter(DictionaryPrefixFilter("pattern"));
+    service.setFilter(DictionaryPrefixFilter("pattern"));
     await future;
     await futureSearchResults;
   });
