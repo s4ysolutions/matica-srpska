@@ -95,7 +95,7 @@ class MaticaService {
     try {
       List<DictionaryEntry> entries = await switch (filter) {
         DictionaryPrefixFilter(pattern: final pattern) =>
-          _dictionary.getEntriesByHeadwordBegin(_lat2cyr(pattern)),
+            _dictionary.getEntriesByHeadwordBegin(_lat2cyr(pattern)),
         DictionaryNoFilter() => Future.value(List<DictionaryEntry>.empty()),
       };
 
@@ -103,11 +103,16 @@ class MaticaService {
       _setSearchResults(results);
       _setSearchState(MaticaSearchState.idle);
       return results;
-    } catch (e, s) {
+    } finally {
       // it is not wise to disable search forever, so i will just log the error
       _setSearchState(MaticaSearchState.idle);
-      rethrow;
     }
+      /*
+    } catch (e, s) {
+      // it is not wise to disable search forever, so i will just log the error
+      _setSearchState(MaticaSearchState.error);
+      rethrow;
+    }*/
   }
 
   Future<void> destroy() async {

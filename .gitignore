@@ -4,3 +4,10 @@ convertor/matica/matica-full.pdf
 .venv
 mongodb
 matica-srpska-sy4-firebase-adminsdk*.json
+.firebaserc
+firebase.json
+firebase_options.dart
+google-services.json
+GoogleService-Info.plist
+.firebase
+
