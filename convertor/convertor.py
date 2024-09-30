@@ -3,6 +3,7 @@ import pikepdf
 import re
 
 from decimal import Decimal
+from uuid import uuid4
 
 ENCODING_TYPE_1B = 1
 ENCODING_TYPE_2B = 2
@@ -123,6 +124,7 @@ class PdfDecoderForPage():
         font = None
         x = 0
         y = 0
+        dx = 1000
         for operands, operator in pikepdf.parse_content_stream(self.page):
             # debug code
             #            print(f" ==== > Operator: {operator}", "Operands: ", operands)
@@ -154,6 +156,7 @@ class PdfDecoderForPage():
             if operator == pikepdf.Operator('BT'):
                 intext = True
                 font = None
+                dx = 1000
                 continue
             if operator == pikepdf.Operator('ET'):
                 intext = False
@@ -170,6 +173,7 @@ class PdfDecoderForPage():
             if operator == pikepdf.Operator('TD'):
                 raise ValueError("Unexpected operator TD")
             if operator == pikepdf.Operator('Td'):
+                dx = operands[0]
                 x += operands[0]
                 y += operands[1]
                 continue
@@ -185,7 +189,7 @@ class PdfDecoderForPage():
                         if isinstance(operand, pikepdf.String):
                             text = operand
                             font_decoder = self.font_decoders[font]
-                            lmbd(text, font_decoder, x, y)
+                            lmbd(text, font_decoder, x, y, dx)
                         else:
                             print(f"Unexpected operand type: {type(operand)}")
                 elif operator == pikepdf.Operator('TJ'):
@@ -195,7 +199,7 @@ class PdfDecoderForPage():
                                 if isinstance(element, pikepdf.String):
                                     text = element
                                     font_decoder = self.font_decoders[font]
-                                    lmbd(text, font_decoder, x, y)
+                                    lmbd(text, font_decoder, x, y, dx)
                                 elif isinstance(element, int):
                                     pass
                                 elif isinstance(element, Decimal):
@@ -207,9 +211,10 @@ class PdfDecoderForPage():
                 elif operator == pikepdf.Operator('Tm'):
                     x = operands[4]
                     y = operands[5]
+                    dx = 1000
 
     @staticmethod
-    def lmbd_debug(text, font_decoder, x, y):
+    def lmbd_debug(text, font_decoder, x, y, dx):
         unicode_text = font_decoder.to_unicode(text)
         print(f"Text: x={x} y={y} {text.__bytes__()} -> \"{unicode_text}\", Font: {font_decoder.name}")
 
@@ -222,7 +227,7 @@ class PdfDecoderForPage():
         prev_x = 785  # assume there's no indent
         first = True
 
-        def lmbd(text, font_decoder, x, y):
+        def lmbd(text, font_decoder, x, y, dx):
             nonlocal prev_y
             nonlocal prev_x
             nonlocal chunks
@@ -252,10 +257,10 @@ class PdfDecoderForPage():
     def convert_to_chunks(self):
         chunks = []
 
-        def lmbd(text, font_decoder, x, y):
+        def lmbd(text, font_decoder, x, y, dx):
             nonlocal chunks
             unicode_text = font_decoder.to_unicode(text)
-            chunks.append(Chunk(unicode_text, x, y))
+            chunks.append(Chunk(unicode_text, x, y, dx))
 
         self._call_for_tj(lmbd)
         return chunks
@@ -368,7 +373,7 @@ class PdfDecoderForPage():
 
     @staticmethod
     def _concatenate_entries(entries1, entries2):
-        if entries2[0].headword is None:
+        if entries2[0].headword is None or entries2[0].headword == "":
             entries1[-1].definition += entries2[0].definition
             entries2 = entries2[1:]
         return entries1 + entries2
@@ -396,16 +401,17 @@ class PdfDecoderForPage():
 
 
 class Chunk:
-    def __init__(self, text, x, y):
+    def __init__(self, text, x, y, dx):
         self.text = text
         self.x = x
         self.y = y
+        self.dx = dx
 
     def __str__(self):
-        return f'"{self.text}" x: {self.x} y: {self.y}'
+        return f'"{self.text}" x: {self.x} y: {self.y} dx: {self.dx}'
 
     def __repr__(self):
-        return f'Chunk("{self.text}", {self.x}, {self.y})'
+        return f'Chunk("{self.text}", {self.x}, {self.y}, {self.dx})'
 
 
 class Entry:
@@ -445,8 +451,10 @@ class PdfDecoderForFile():
                     print(f"Page {n}: {entries[0].headword}", file=sys.stderr)
                 prev_entries = entries
                 for entry in entries:
-                    if entry.headword or entry.definition:
+                    if entry.headword:
                         lmbda(entry)
+                    else:
+                        raise ValueError(f"Entry without headword: {entry}")
 
 
 def bytes2cid(b):
@@ -555,7 +563,7 @@ fixes = {
     }
 }
 typos = {
-    # '/C0_4': {
+    # '/C0_4': mongodb://localhost:27017/{
     #    'cамoгаcник ': 'самогласник ',
     # }
 }
@@ -563,26 +571,51 @@ typos = {
 if __name__ == '__main__':
     import argparse
     import sys
+    import time
 
     parser = argparse.ArgumentParser(description='Парсер за Матицу Српску')
 
     parser.add_argument('--debug', action='store_true',
                         help='Приказивање дебаг информација')
+    parser.add_argument('--positions', action='store_true',
+                        help='Приказивање позиција у PDF-у')
     parser.add_argument('--full-search-txt', action='store_true',
                         help='Екстракција свих страна из PDF-а у текстуални фајл')
     parser.add_argument('--full-search-csv', action='store_true',
                         help='Екстракција свих страна из PDF-а у SCV фајл')
+    parser.add_argument('--full-search-json', action='store_true',
+                        help='Екстракција свих страна из PDF-а у JSON фајл')
     parser.add_argument('--mongodb-connection-string', default=None,
                         help='Екстракција свих страна из PDF-а у mongodb')
+    parser.add_argument('--firebase-service-account-key-json', default=None,
+                        help='Екстракција свих страна из PDF-а у firebase real-time database')
 
     args = parser.parse_args()
-    if args.full_search_txt or args.full_search_csv or args.mongodb_connection_string:
+    if args.full_search_txt or args.full_search_csv or args.mongodb_connection_string or args.firebase_service_account_key_json or args.positions or args.full_search_json:
         convertor = PdfDecoderForFile(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf'))
         if args.full_search_txt:
             convertor.each(lambda entry: print(entry.txt), args.debug)
+        if args.positions:
+            print('Not implemented')
         if args.full_search_csv:
             print("headword\tdefinition\tpage")
             convertor.each(lambda entry: print(entry.txt('\t')), args.debug)
+        if args.full_search_json:
+            global json_key
+            json_key = 0
+
+            def process_entries(entry):
+                global json_key
+                if json_key > 0:
+                    print(",")
+                print(
+                    f'   "{json_key}": {{"headword": "{entry.headword}", "definition": "{entry.definition}", "page": "{entry.page_no}"}}', end="")
+                json_key += 1
+
+
+            print("{")
+            convertor.each(process_entries, args.debug)
+            print("}")
         if args.mongodb_connection_string:
             from pymongo import MongoClient
 
@@ -613,6 +646,8 @@ if __name__ == '__main__':
                     }
                 }
             )
+
+
             def process_entries(entry):
                 # Insert into MongoDB collection
                 collection.insert_one({
@@ -620,6 +655,45 @@ if __name__ == '__main__':
                     'definition': entry.definition,
                     'page': str(entry.page_no)  # Ensure page_no is converted to a string
                 })
+
+
+            convertor.each(process_entries, args.debug)
+        if args.firebase_service_account_key_json:
+            import firebase_admin
+            from firebase_admin import credentials
+            from firebase_admin import db
+
+            credentials = credentials.Certificate(args.firebase_service_account_key_json)
+            firebase_admin.initialize_app(credentials, {
+                'databaseURL': 'https://matica-srpska-sy4-default-rtdb.europe-west1.firebasedatabase.app'
+            })
+
+            entries_ref = db.reference('entries')
+            # search by headword is not good idea, because they are not unique
+            entries_ref.delete()
+
+
+            def process_entries(entry):
+                # start_time = time.time()
+                # snapshot = entries_ref.order_by_child('headword').equal_to(entry.headword).get()
+                # end_time = time.time()
+                # execution_time = end_time - start_time
+                # print(f"Execution time equal_to({entry.headword}): {execution_time} seconds")
+                # entries = list(snapshot.items())
+                # if len(entries) > 0:
+                #    print(f"Duplicate headword: {entry.headword}")
+                # key, _ = entries[0]
+                #start_time = time.time()
+                key = uuid4().hex
+                ref = entries_ref.child(key)
+                # else:
+                #ref = entries_ref.push()
+                ref.set({'headword': entry.headword, 'definition': entry.definition, 'page': entry.page_no})
+                #end_time = time.time()
+                #execution_time = end_time - start_time
+                #print(f"Execution time ref.set ({entry.headword}): {execution_time} seconds")
+
+
             convertor.each(process_entries, args.debug)
         exit(0)
 
@@ -628,9 +702,9 @@ if __name__ == '__main__':
         prev_entries = []
         for n, page in enumerate(pdf.pages, start=1):
             # print(f"Page =========> {n}")
-            if n < 302:
+            if n < 22:
                 continue
-            if n > 302:
+            if n > 22:
                 break
             # if n> 20:
             #    break
