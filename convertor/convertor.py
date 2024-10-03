@@ -1306,6 +1306,8 @@ class PdfDecoderForFile:
         # search by headword is not good idea, because they are not unique
         entries_ref.delete()
 
+        key = 0
+
         def process_entries_rtdb(entry):
             # start_time = time.time()
             # snapshot = entries_ref.order_by_child('headword').equal_to(entry.headword).get()
@@ -1317,12 +1319,17 @@ class PdfDecoderForFile:
             #    print(f"Duplicate headword: {entry.headword}")
             # key, _ = entries[0]
             # start_time = time.time()
-            key = uuid4().hex
-            ref = entries_ref.child(key)
+            nonlocal key
+            ref = entries_ref.child(str(key))
             # else:
             # ref = entries_ref.push()
             ref.set(
-                {'headword': entry.headword, 'definition': entry.definition, 'page': entry.page_no})
+                {'headword': entry.headword,
+                 'definition': entry.definition,
+                 'page': entry.page_no,
+                 'lookup': ''.join((entry.headword + entry.definition).lower().split())})
+
+            key += 1
             # end_time = time.time()
             # execution_time = end_time - start_time
             # print(f"Execution time ref.set ({entry.headword}): {execution_time} seconds")
@@ -1341,24 +1348,24 @@ fixes = {
         bytes2cid(b'\x00e'): '~',
         # bytes2cid(b'\x00\x0b'): '~', breaks p23. ајурведски -а, -о који се односи на ајурведу: медицина.
         bytes2cid(b'\x00\r'): '~',
-        #bytes2cid(b'\x00\x0b'): '~', ^26:27 2[-зма >-з~а ]
-        #bytes2cid(b'\x00\x0b'): '~', ^18:6 политички~
+        # bytes2cid(b'\x00\x0b'): '~', ^26:27 2[-зма >-з~а ]
+        # bytes2cid(b'\x00\x0b'): '~', ^18:6 политички~
         bytes2cid(b'\x00\x13'): '~',
         bytes2cid(b'\x00\xb8'): 'и',
         bytes2cid(b'\x00\xd0'): 'и',
         bytes2cid(b'\x01\xb5'): 'л',
     },
     '/C0_1': {
-        #bytes2cid(b'\x00"'): 'ш',
-        #bytes2cid(b'\x00"'): 'а', # 16:7 аБДИRација >абдикација - not needed
-        #bytes2cid(b'\x00"'): 'ш', # 17:14 ^[дошао. >доаао. ] - not needed
+        # bytes2cid(b'\x00"'): 'ш',
+        # bytes2cid(b'\x00"'): 'а', # 16:7 аБДИRација >абдикација - not needed
+        # bytes2cid(b'\x00"'): 'ш', # 17:14 ^[дошао. >доаао. ] - not needed
         bytes2cid(b'\x00|'): 'с',
         # bytes2cid(b'\x08<'): 'к',!!!
         bytes2cid(b'\x00f'): 'и',
         bytes2cid(b'\x00h'): 'к',
         bytes2cid(b'\x00r'): 'к',
-        #bytes2cid(b'\x00t'): 'е', # 17:14 [речце: >речцее ],
-        #bytes2cid(b'\x00\x0c'): 'д', # ^16:32 абонос > абондс
+        # bytes2cid(b'\x00t'): 'е', # 17:14 [речце: >речцее ],
+        # bytes2cid(b'\x00\x0c'): 'д', # ^16:32 абонос > абондс
         bytes2cid(b'\x00\x13'): '~',
         bytes2cid(b'\x00\x14'): '~',
         bytes2cid(b'\x00\x7f'): 'д',
@@ -1388,9 +1395,9 @@ fixes = {
         bytes2cid(b'\x04\xbe'): 'ак',
         bytes2cid(b'\x04\xbf'): 'и',
 
-        #bytes2cid(b'\x01\xff'): '@1',
-        #bytes2cid(b'\x00\x07'): '@3',
-        #bytes2cid(b'\x00\x07'): '@3',
+        # bytes2cid(b'\x01\xff'): '@1',
+        # bytes2cid(b'\x00\x07'): '@3',
+        # bytes2cid(b'\x00\x07'): '@3',
     },
     '/C0_2': {
         bytes2cid(b'\x00|'): 'с',
@@ -1398,7 +1405,7 @@ fixes = {
         bytes2cid(b'\x00F'): 'е',
         bytes2cid(b'\x01Z'): 'и',
         bytes2cid(b'\x00t'): 'е',
-        #bytes2cid(b'\x00\x01'): 'а', !16:7 ж >а
+        # bytes2cid(b'\x00\x01'): 'а', !16:7 ж >а
         bytes2cid(b'\x00\x19'): 'ј',
         bytes2cid(b'\x00\xa9'): 'р',
         bytes2cid(b'\x00\xb3'): 'к',
@@ -1425,7 +1432,7 @@ fixes = {
         # bytes2cid(b'\x08^'): 'лингв', broken
         bytes2cid(b'\x08]'): 'п',
         # bytes2cid(b'\x00\r'):
-        bytes2cid(b'\x00\t'): 'с', # 16:9 [евр. >свр. ]
+        bytes2cid(b'\x00\t'): 'с',  # 16:9 [евр. >свр. ]
         # bytes2cid(b'\x00\t'): 'в, #p21 агресивност, -ости
         bytes2cid(b'\x00V'): 'п',
         bytes2cid(b'\x00\x08'): 'т',
@@ -1442,15 +1449,15 @@ fixes = {
         bytes2cid(b'\x04\xb1'): 'м',
         bytes2cid(b'\x04\xc0'): 'о',
         bytes2cid(b'\x04\xe8'): 'п',
-        #bytes2cid(b'\x04\xe9'): 'у', # ^17:55 дрyгUЈИ дрyгуЈИ
-        bytes2cid(b'\x04\xe9'): 'и', # 17:55 дрyгUЈИ дрyгиЈИ
+        # bytes2cid(b'\x04\xe9'): 'у', # ^17:55 дрyгUЈИ дрyгуЈИ
+        bytes2cid(b'\x04\xe9'): 'и',  # 17:55 дрyгUЈИ дрyгиЈИ
         bytes2cid(b'\x05m'): 'ал',
-        bytes2cid(b'\x05\x1e'): 'пл', #17:55 ваздуоповни
+        bytes2cid(b'\x05\x1e'): 'пл',  # 17:55 ваздуоповни
         bytes2cid(b'\x06\x10'): 'д',
         bytes2cid(b'\x08^'): 'и',  # p21, ајурведски ... односи,
         bytes2cid(b'\x0b\xa8'): 'аљ',  # p21, ајурведски ... односи,
         bytes2cid(b'\x0cP'): 'с',
-        #bytes2cid(b'\x0e\xc4'): '@1',
+        # bytes2cid(b'\x0e\xc4'): '@1',
         bytes2cid(b'\x0f-'): 'р',
         # bytes2cid(b'\x0f\x83'): 'ј',
         # bytes2cid(b'\x0c\xf4'): 'ни',
@@ -1484,7 +1491,7 @@ fixes = {
         bytes2cid(b'\x01_'): 'к',
         bytes2cid(b'\x01,'): 'и',
         bytes2cid(b'\x02&'): '.',
-        bytes2cid(b'\x02\xb8'): '', # 16:9 [. > ]
+        bytes2cid(b'\x02\xb8'): '',  # 16:9 [. > ]
         bytes2cid(b'\x03O'): 'к',
         bytes2cid(b'\x03)'): 'о',
         bytes2cid(b'\x03\xc9'): 'д',
@@ -1555,21 +1562,21 @@ fixes = {
     },
     '/C0_10': {
         # bytes2cid(b'\x00\x04'): 'ц', #!!!!
-        #bytes2cid(b'\x00 '): '@1',
+        # bytes2cid(b'\x00 '): '@1',
         bytes2cid(b'\x00A'): 'и',
-        #bytes2cid(b'\x00\t'): 'ијс', # 16:8 (абдик3.цйјскЙ), >(абдикацски) ^16:1[данас? >данаијс? ],
+        # bytes2cid(b'\x00\t'): 'ијс', # 16:8 (абдик3.цйјскЙ), >(абдикацски) ^16:1[данас? >данаијс? ],
         bytes2cid(b'\x00\x04'): 'е',
-        bytes2cid(b'\x00\x13'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
-        #bytes2cid(b'\x00\x1c'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        bytes2cid(b'\x00\x13'): 'ј',  # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        # bytes2cid(b'\x00\x1c'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
         bytes2cid(b'\x00\x1c'): ',',
         bytes2cid(b'\x01H'): 'р',
         bytes2cid(b'\x01\x12'): 'и',
-        #bytes2cid(b'\x01\x12'): 'а',
+        # bytes2cid(b'\x01\x12'): 'а',
         bytes2cid(b'\x021'): 'е',
-        bytes2cid(b'\x02\xcc'): 'ациј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        bytes2cid(b'\x02\xcc'): 'ациј',  # 16:8 (абдик3.цйјскЙ), >(абдикацски)
         bytes2cid(b'\x03`'): 'д',
 
-        #bytes2cid(b'\x00O'): '@2', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        # bytes2cid(b'\x00O'): '@2', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
     }
 }
 typos = {
@@ -1740,7 +1747,7 @@ if __name__ == '__main__':
         exit(0)
     #################### KNOWN PROBLEMS #########################
     # [агенс][аге нс]
-    #августовски -3., -о који се односу на август1: ~сунце, ~вру-ћина. 17 35
+    # августовски -3., -о који се односу на август1: ~сунце, ~вру-ћина. 17 35
     #################### TESTST #########################
     convertor.debug_entry(18, 6)
     exit(0)
