@@ -1,3 +1,4 @@
+import json
 import os
 from typing import List
 
@@ -15,6 +16,11 @@ PARAGRAPH_INTERVAL = 12
 LINE_INTERVAL = 6
 
 DEBUG_PDF = False
+DEBUG_INDENT = False
+DEBUG_LINES = False
+DEBUG_GLITCHES = False
+
+debug_progress = False
 
 
 def string_to_cids(string, encoding_type):
@@ -31,18 +37,24 @@ def string_to_cids(string, encoding_type):
     return cids
 
 
-class NewLineDetector():
+BREAK = False
+
+
+class NewLineDetector:
     def __init__(self):
         self.current_chunk = None
         self.is_new_line = False
 
     def set_chunk(self, chunk):
+        global BREAK
+        if BREAK:
+            print()
         if self.current_chunk is None:
             self.current_chunk = chunk
             self.is_new_line = False
             return
         # same line
-        if self.current_chunk.y == chunk.y:
+        if abs(self.current_chunk.y - chunk.y) < 1:
             self.current_chunk = chunk
             self.is_new_line = False
             return
@@ -62,6 +74,14 @@ def is_se(text):
         return True
     if len(text) == 2 and (text[0] == 'c' or text[0] == 'с') and (text[1] == 'e' or text[1] == 'е'):
         return True
+
+    return False
+
+
+def is_se_brackets(text):
+    if len(text) >= 4 and text[0] == '(' and text[3] == ')':
+        return is_se(text[1:3])
+
     return False
 
 
@@ -69,9 +89,11 @@ def _concat_chunks_by_same_font(chunks):
     chunksx = []
     prev_chunk = None
     for chunk in chunks:
+        if chunk == 'indent':  # hack, assuming this never will be called in the context requiring indent
+            continue
         if prev_chunk is None:
             prev_chunk = chunk.copy()
-        elif prev_chunk.font == chunk.font and not is_se(chunk.text):
+        elif prev_chunk.font == chunk.font and not (is_se(chunk.text) or is_se_brackets(chunk.text)):
             prev_chunk.text += chunk.text
         else:
             chunksx.append(prev_chunk)
@@ -153,11 +175,29 @@ def _word_lat_to_cyr(text):
     return ''.join(lat_to_cyr.get(char, char) for char in text)
 
 
+def fix_cyrillic(text):
+    return _word_lat_to_cyr(text)
+
+
 class ChunksParagraph:
     def __init__(self, lines):
-        self.lines = lines
+        if lines[0] == 'indented':
+            self.indented = True
+            self.lines = lines[1:]
+        else:
+            self.indented = False
+            self.lines = lines
 
-    def headword_and_body(self):
+    def headword_and_body(self, page_no=None, para_no=None):
+        # removes spaces before comma and dot
+        pattern = r'\s+([.,.])'
+
+        def r(para_words):
+            body = ' '.join(para_words).strip()
+            body = body.strip()
+            body = re.sub(pattern, r'\1', body)
+            return body
+
         removed_hyphens = self._get_without_hyphens(self.lines)
         all_chunks = []
         for line in removed_hyphens:
@@ -170,9 +210,12 @@ class ChunksParagraph:
         para_words = ' '.join(chunk.text for chunk in para_chunks).split()
 
         # assume no headword
-        headword = ''
         if len(para_words) == 0:
-            return '', ' '.join(para_words).strip()
+            raise ValueError("Empty definition")
+            return '', ''
+
+        if not self.indented:
+            return '', r(para_words)
 
         # first word is headword
         headword = para_words[0]
@@ -180,14 +223,18 @@ class ChunksParagraph:
             # comma is marker of end of headword
             # clean it up and return
             headword = headword[:-1]
-            return headword, ' '.join(para_words[1:]).strip()
+            return headword, r(para_words[1:])
 
         # search for what can be added to headword
         para_words = para_words[1:]
         if len(para_words) == 0:
             print(f"Empty definition for headword: {headword} |{' '.join(para_words)}|", file=sys.stderr)
-            raise ValueError(f"Empty definition for headword: {headword}")
-            return headword, ' '.join(para_words).strip()
+            print("Lines:", file=sys.stderr)
+            for line in self.lines:
+                print(f"Line: {line}", file=sys.stderr)
+            raise ValueError(
+                f"Empty definition for headword: {headword}/{self.lines[0].cids.__bytes__()} on page {page_no} in para {para_no}")
+            return headword, r(para_words)
 
         # check for -ce
         first_word = para_words[0]
@@ -195,9 +242,14 @@ class ChunksParagraph:
             headword += ' се'
             # leave comma as the first chart of the next word
             para_words[0] = para_words[0][2:].strip()
-            if para_words[0] == '' and len(para_words) > 0:
-                para_words = para_words[1:]
-                first_word = para_words[0]
+        elif is_se_brackets(first_word):
+            headword += ' (се)'
+            # leave comma as the first chart of the next word
+            para_words[0] = para_words[0][4:].strip()
+        # TODO: inconsistent with the -se after и
+        if para_words[0] == '' and len(para_words) > 0:
+            para_words = para_words[1:]
+            first_word = para_words[0]
 
         # if comma is first char in first word, clean it up and return
         if first_word.startswith(','):
@@ -205,10 +257,10 @@ class ChunksParagraph:
             para_words[0] = para_words[0][1:]
             if para_words[0] == '' and len(para_words) > 0:
                 para_words = para_words[1:]
-            return headword, ' '.join(para_words).strip()
+            return headword, r(para_words)
 
         # headword can continue with и
-        if first_word.startswith('и ') or first_word == 'и':
+        if len(headword) > 0 and first_word.startswith('и ') or first_word == 'и':
             # skip it and take next word
             para_words[0] = para_words[0][1:].strip()
             if para_words[0] == '' and len(para_words) > 0:
@@ -216,20 +268,22 @@ class ChunksParagraph:
             first_word = para_words[0].strip()
             comma = False
             if first_word.endswith(','):
-               comma = True
-               first_word = first_word[:-1]
+                comma = True
+                first_word = first_word[:-1]
 
             if not (headword.strip() == first_word):
                 headword += ' и ' + first_word
             # next can be comma or -се
             # if headword ends with comma, clean it up and return
             if comma:
-                return headword, ' '.join(para_words[1:]).strip()
+                return headword, r(para_words[1:])
 
             if len(para_words) == 0:
-                return headword, ' '.join(para_words[1:]).strip()
+                return headword, r(para_words[1:])
 
             para_words = para_words[1:]
+            if len(para_words) == 0:
+                raise ValueError("No definition")
             first_word = para_words[0]
 
             if is_se(first_word):
@@ -237,21 +291,28 @@ class ChunksParagraph:
                 # leave comma as the first chart of the next word
                 para_words[0] = para_words[0][2:]
                 first_word = para_words[0].strip()
-                if first_word == '' and len(para_words) > 0:
-                    para_words = para_words[1:]
-                    first_word = para_words[0]
+            if is_se_brackets(first_word):
+                headword += ' (се)'
+                # leave comma as the first chart of the next word
+                para_words[0] = para_words[0][4:]
+            # inconsistent with the -se after single word
+            first_word = para_words[0].strip()
+            if first_word == '' and len(para_words) > 0:
+                para_words = para_words[1:]
+                first_word = para_words[0]
 
             # if comma is first char (after -се) in first word, clean it up and return
             if first_word.startswith(','):
                 # clean up leading comma
-                para_words[0] = para_words[0][1:].split()
+                para_words[0] = para_words[0][1:].strip()
                 if first_word == '' and len(para_words) > 0:
                     para_words = para_words[1:]
-                return headword, ' '.join(para_words).strip()
+                return headword, r(para_words)
 
-        return headword, ' '.join(para_words).strip()
+        return headword, r(para_words)
 
-    def _get_without_hyphens(self, lines):
+    @staticmethod
+    def _get_without_hyphens(lines):
         linesx = []
         for line in lines:
             last_chunk = line[-1]
@@ -273,57 +334,194 @@ class ChunksParagraph:
         return chunksx
 
 
-class IndentDetector():
+class IndentDetector:
     def __init__(self, lines_1, left_x_1, lines_2, left_x_2):
         self.max_between_lines = 0
         self.min_between_paragraphs = 1000
         self.max_space_non_indent = 0
         self.min_space_indent = 1000
+        if DEBUG_INDENT:
+            print(f"set dim column 1:", file=sys.stderr)
         self._set_dims(lines_1, left_x_1)
+        if DEBUG_INDENT:
+            print(f"set dim column 2:", file=sys.stderr)
         self._set_dims(lines_2, left_x_2)
+        if self.min_space_indent == 1000:
+            raise ValueError('Cannot evaluate min_space_indent')
+        if self.max_space_non_indent == 0:
+            raise ValueError('Cannot evaluate max_space_non_indent')
 
     def _set_dims(self, lines, left):
-        for i in range(1, len(lines)):
-            chunk = lines[i][0]
-            prev_chunk = lines[i - 1][0]
-            # definitely new paragraph
-            if chunk.x > left + 12:
-                if self.min_between_paragraphs > prev_chunk.y - chunk.y:
-                    self.min_between_paragraphs = prev_chunk.y - chunk.y
-            # definitely new line
-            elif chunk.x < left + 6:
-                if self.max_between_lines < prev_chunk.y - chunk.y:
-                    self.max_between_lines = prev_chunk.y - chunk.y
-            # definitely new line
-            if prev_chunk.y - chunk.y < 11.5:
-                if self.max_space_non_indent < chunk.x - left:
-                    self.max_space_non_indent = chunk.x - left
-                if chunk.x - left > 12:
-                    raise ValueError("xx")
-            # definitely new paragraph
-            if prev_chunk.y - chunk.y > 14:
-                if self.min_space_indent > chunk.x - left:
-                    self.min_space_indent = chunk.x - left
+        non_ident = 6
+        indent = 12
+        indent_hard_mark = 8
+        newline = 10
+        para = 12
+        interval_hard_mark = 11
+
+        _min_space_indent = 1000
+        _max_space_non_indent = 0
+        _min_between_paragraphs = 1000
+        _max_between_lines = 0
+
+        while _min_space_indent == 1000 or _max_space_non_indent == 0:
+            if DEBUG_INDENT:
+                print(f"traversing lines from 1 to {len(lines)}",
+                      file=sys.stderr)
+            for i in range(1, len(lines)):
+                chunk = lines[i][0]
+                prev_chunk = lines[i - 1][0]
+                if DEBUG_INDENT:
+                    print(f"comparing line {i}: {prev_chunk.text}/{chunk.text}",
+                          file=sys.stderr)
+                # first take a look at the indent and make a guess about the line interval
+                dx = chunk.x - left
+                if DEBUG_INDENT:
+                    print(f"indent space={dx} evaluate intervals between lines/paragraphs", file=sys.stderr)
+                if dx > indent:
+                    # definitely new paragraph based on big indent
+                    # can assume interval between paragraphs
+                    dy = prev_chunk.y - chunk.y
+                    if _min_between_paragraphs > dy:
+                        if dy < interval_hard_mark:
+                            if DEBUG_INDENT:
+                                print(
+                                    f"min_between_paragraphs less than {interval_hard_mark} ({dy}) in line {i}: {prev_chunk.text}/{chunk.text}, ignored",
+                                    file=sys.stderr)
+                        else:
+                            if DEBUG_INDENT:
+                                print(f"set min_between_paragraphs to {dy}", file=sys.stderr)
+                            _min_between_paragraphs = dy
+                elif dx < non_ident:
+                    # definitely new line based on small indent
+                    # can assume interval between lines
+                    dy = prev_chunk.y - chunk.y
+                    if _max_between_lines < dy:
+                        if dy > interval_hard_mark:
+                            if DEBUG_INDENT:
+                                print(
+                                    f"max_between_lines more than {interval_hard_mark} ({dy}) in line {i}: {prev_chunk.text}/{chunk.text}, ignored",
+                                    file=sys.stderr)
+                        else:
+                            if DEBUG_INDENT:
+                                print(f"set max_between_lines to {dy}", file=sys.stderr)
+                            _max_between_lines = dy
+                else:
+                    if DEBUG_INDENT:
+                        print(f"undefined indent space {dx} in line {i}: {prev_chunk.text}/{chunk.text}",
+                              file=sys.stderr)
+
+                # now take a look at the space between lines and make a guess about the indent
+
+                dy = prev_chunk.y - chunk.y
+                if DEBUG_INDENT:
+                    print(f"line interval={dy} evaluate indent space", file=sys.stderr)
+                if dy > para:
+                    # definitely new paragraph
+                    # can assume indent
+                    dx = chunk.x - left
+                    if DEBUG_INDENT:
+                        print(
+                            f"try to set min_space_indent to {dx}(current = {_min_space_indent}) due to interval {dy} > threshold {para}",
+                            file=sys.stderr)
+                    if _min_space_indent > dx:
+                        if dx < indent_hard_mark:
+                            if DEBUG_INDENT:
+                                print(
+                                    f"min_space_indent less than {indent_hard_mark} ({dx}) while line interval is big ({dy}) in line {i}: {prev_chunk.text}/{chunk.text}, ignored",
+                                    file=sys.stderr)
+                        else:
+                            if DEBUG_INDENT:
+                                print(f"set min_space_indent to {dx}", file=sys.stderr)
+                            _min_space_indent = dx
+                elif dy < newline:
+                    # definitely new line, can assume non indent
+                    if abs(dy) > 4:  # ignore noise
+                        dx = chunk.x - left
+                        if DEBUG_INDENT:
+                            print(
+                                f"try to set max_space_non_indent to {dx}(current = {_max_space_non_indent}) due to interval {dy} < threshold {newline}",
+                                file=sys.stderr)
+                        if _max_space_non_indent < dx:
+                            if dx > indent_hard_mark:
+                                if DEBUG_INDENT:
+                                    print(
+                                        f"max_space_non_indent more than {indent_hard_mark} ({dx}) while line interval is small ({prev_chunk.y - chunk.y}) in line {i}: {prev_chunk.text}/{chunk.text}, ignored",
+                                        file=sys.stderr)
+                            else:
+                                if DEBUG_INDENT:
+                                    print(f"set max_space_non_indent to {dx}", file=sys.stderr)
+                                _max_space_non_indent = dx
+                else:
+                    if DEBUG_INDENT:
+                        print(f"undefined interval {dy} in line {i}: {prev_chunk.text}/{chunk.text}", file=sys.stderr)
+            # indent was not set due para threshold was set too high
+            # let's try to lower it
+            if _min_space_indent == 1000:
+                para -= 0.1
+                if para < interval_hard_mark:
+                    break
+                else:
+                    if DEBUG_INDENT:
+                        print(f"para threshold set to {para}", file=sys.stderr)
+            # non_indent was not set due newline threshold was set too low
+            if _max_space_non_indent == 0:
+                newline += 0.1
+                if newline > interval_hard_mark:
+                    break
+                else:
+                    if DEBUG_INDENT:
+                        print(f"newline threshold set to {newline}", file=sys.stderr)
+
+        if _min_space_indent < self.min_space_indent:
+            self.min_space_indent = _min_space_indent
+        if _max_space_non_indent > self.max_space_non_indent:
+            self.max_space_non_indent = _max_space_non_indent
+        if _min_between_paragraphs < self.min_between_paragraphs:
+            self.min_between_paragraphs = _min_between_paragraphs
+        if _max_between_lines > self.max_between_lines:
+            self.max_between_lines = _max_between_lines
 
 
 class ChunksPage:
     def __init__(self, chunks):
+        if DEBUG_GLITCHES:
+            print('before remove leading glitches', file=sys.stderr)
+            print(chunks[0], file=sys.stderr)
+            print(chunks[1], file=sys.stderr)
+            print(chunks[2], file=sys.stderr)
+        chunks = ChunksPage.remove_leading_glitches(chunks)
+        if DEBUG_GLITCHES:
+            print('after remove leading glitches', file=sys.stderr)
+            print(chunks[0], file=sys.stderr)
+            print(chunks[1], file=sys.stderr)
+            print(chunks[2], file=sys.stderr)
+        i = 0
+        # clean garbage from the beginning
+        if DEBUG_INDENT:
+            print(f"clean chunk[{i}]: {chunks[i].text}", file=sys.stderr)
+        while i < len(chunks) and chunks[i].text == 'I ' or chunks[i].text == 'а ':
+            i += 1
+            if DEBUG_INDENT:
+                print(f"clean chunk[{i}]: {chunks[i].text}", file=sys.stderr)
+        chunks = chunks[i:]
+
         self.chunks = chunks
         self.chunks_title = []
         self.chunks_page = []
-        self.chunks_column_1 = []
-        self.chunks_column_2 = []
-        self.left_x_column_1 = 0
-        self.left_x_column_2 = 0
+        self.chunks_lines = []
         self.chunks_lines_1 = []
         self.chunks_lines_2 = []
+        self.left_x_column_1 = 0
+        self.left_x_column_2 = 0
         self.indented_lines_1 = {}
         self.indented_lines_2 = {}
         self.chunks_paragraphs: List[ChunksParagraph] = []
 
         self._set_title_and_page()
-        self._set_columns()
         self._set_lines()
+        self._set_columns()
+        self._set_idented_lines()
         self._set_paragraphs()
 
     def title(self):
@@ -338,28 +536,63 @@ class ChunksPage:
             i += 1
         self.chunks_title = chunks[:i]
         self.chunks_page = chunks[i:]
-
-    def _set_columns(self):
-        chunks = self.chunks_page
-
-        i = 1
-        # leap above current line more the 50 pixels
-        while i < len(chunks) and (chunks[i - 1].y - chunks[i].y) >= 0:
-            i += 1
-
-        self.chunks_column_1 = chunks[:i]
-        self.chunks_column_2 = chunks[i:]
-
-        top, left = self._get_top_left(self.chunks_column_1)
-        self.left_x_column_1 = float(left)
-        top, left = self._get_top_left(self.chunks_column_2)
-        self.left_x_column_2 = float(left)
+        if DEBUG_LINES:
+            print(f"chunks_page: {len(self.chunks_page)}", file=sys.stderr)
+            for i in range(min(30, len(self.chunks_page))):
+                print(f"chunk[{i}]: {str(self.chunks_page[i])}", file=sys.stderr)
+            for i in range(max(0, len(self.chunks_page) - 30), len(self.chunks_page)):
+                print(f"chunk[{i}]: {str(self.chunks_page[i])}", file=sys.stderr)
 
     def _set_lines(self):
-        self.chunks_lines_1 = self._get_lines(self.chunks_column_1)
-        self.chunks_lines_2 = self._get_lines(self.chunks_column_2)
+        self.chunks_lines = self._get_lines(self.chunks_page)
+
+    def _set_columns(self):
+        if len(self.chunks_lines) == 0:
+            return
+        left_xs = [self.chunks_lines[0][0].x, 1000]
+        columns = [[self.chunks_lines[0]], []]
+        current_column = 0
+        for i in range(1, len(self.chunks_lines)):
+            line = self.chunks_lines[i]
+            chunk = line[0]
+            prev_line = self.chunks_lines[i - 1]
+            prev_chunk = prev_line[0]
+            if current_column == 0:
+                # detect second column as leap above current line more than some amount of pixels
+                dy = chunk.y - prev_chunk.y
+                if dy > 30:  # leap above current line more the 50 pixels, assume new column
+                    current_column = 1
+                elif dy < -30:  # leap below current line more the 50 pixels, assume new column
+                    # assume second column always above the first one
+                    raise ValueError(f"Unexpected column: {current_column}")
+            else:
+                assert len(left_xs) == 2
+                # detect first column as leap to the left more than some amount of pixels
+                if chunk.x < left_xs[1] - 100:
+                    current_column = 0
+            # move left_x to the left if needed
+            if chunk.x < left_xs[current_column]:
+                left_xs[current_column] = chunk.x
+            # add line to the existing column
+            columns[current_column].append(line)
+
+        self.left_x_column_1 = left_xs[0]
+        self.left_x_column_2 = left_xs[1]
+        self.chunks_lines_1 = columns[0]
+        self.chunks_lines_2 = columns[1]
+
+    def _set_idented_lines(self):
+        if DEBUG_INDENT:
+            print(f"chunks_lines_1: {len(self.chunks_lines_1)}", file=sys.stderr)
+            print(f"chunks_lines_2: {len(self.chunks_lines_2)}", file=sys.stderr)
         indentDetector = IndentDetector(self.chunks_lines_1, self.left_x_column_1,
                                         self.chunks_lines_2, self.left_x_column_2)
+        if DEBUG_INDENT:
+            print(f"indentDetector for page:", file=sys.stderr)
+            print(f"  .max_space_non_indent={indentDetector.max_space_non_indent}", file=sys.stderr)
+            print(f"  .min_space_indent={indentDetector.min_space_indent}", file=sys.stderr)
+            print(f"  .max_between_lines={indentDetector.max_between_lines}", file=sys.stderr)
+            print(f"  .min_between_paragraphs={indentDetector.min_between_paragraphs}", file=sys.stderr)
         self.indented_lines_1 = self._get_indented_lines(indentDetector, self.chunks_lines_1, self.left_x_column_1)
         self.indented_lines_2 = self._get_indented_lines(indentDetector, self.chunks_lines_2, self.left_x_column_2)
 
@@ -390,17 +623,32 @@ class ChunksPage:
         )
 
     @staticmethod
+    def remove_leading_glitches(chunks):
+        while len(chunks) > 0 and chunks[0].has_leading_glitches():
+            cleaned_chunk = chunks[0].copy_without_first_2bytes()
+            if cleaned_chunk.is_empty():
+                chunks = chunks[1:]
+            else:
+                chunks = [cleaned_chunk] + chunks[1:]
+        return chunks
+
+    @staticmethod
     def _get_lines(chunks):
         detector = NewLineDetector()
         i = 0
         lines = []
         line = []
         while i < len(chunks):
-            detector.set_chunk(chunks[i])
+            chunk = chunks[i]
+            detector.set_chunk(chunk)
             if detector.is_new_line:
+                line = ChunksPage.remove_leading_glitches(line)
+                if len(line) == 0:
+                    i += 1
+                    continue
                 lines.append(line)
                 line = []
-            line.append(chunks[i])
+            line.append(chunk)
             i += 1
         if len(line) > 0:
             lines.append(line)
@@ -413,7 +661,8 @@ class ChunksPage:
         middle_space = id.max_space_non_indent + (id.min_space_indent - id.max_space_non_indent) / 2
         middle_interval = id.max_between_lines + (id.min_between_paragraphs - id.max_between_lines) / 2
         for i in range(len(lines)):
-            space = lines[i][0].x - left_x
+            chunk = lines[i][0]
+            space = chunk.x - left_x
 
             # ....................max_space_non_indent.........min_space_indent..................
             #  likely non indent |                    undefined                 |likely indent
@@ -466,26 +715,72 @@ class ChunksPage:
         for i in range(len(chunks_lines)):
             line = chunks_lines[i]
             if len(lines) == 0:
-                lines = [line]
+                if idents.get(i, False):
+                    lines = ['indented', line]
+                else:
+                    lines = [line]
                 continue
             if idents.get(i, False):
-                paragraphs.append(lines)
-                lines = []
+                if ChunksPage.no_osr_glitch_line(lines):
+                    paragraphs.append(lines)
+                lines = ['indented']
             lines.append(line)
 
         if len(lines) > 0:
-            paragraphs.append(lines)
+            if ChunksPage.no_osr_glitch_line(lines):
+                paragraphs.append(lines)
 
         return paragraphs
 
     @staticmethod
-    def _get_top_left(chunks):
+    def no_osr_glitch_line(lines):
+        if len(lines) == 0:
+            return True
+        elif len(lines) == 1:
+            test = lines
+        elif len(lines) == 2 and lines[0] == 'indented':
+            test = lines[1:]
+        else:
+            return True
+
+        if len(test[0]) > 1:
+            return True
+
+        chunk = test[0][0]
+
+        glitch = (True
+                  or chunk.cids.__bytes__() == b'\x00\\\x12I'
+                  or chunk.cids.__bytes__() == b'\x00\x14'
+                  or chunk.cids.__bytes__() == b'\x00\x7f\x12I'
+                  or chunk.cids.__bytes__() == b'\x00\xbb\x01='
+                  or chunk.cids.__bytes__() == b'\x01\x88\x02\xf2'
+                  or chunk.cids.__bytes__() == b'\x02|\x02\x84'
+                  or chunk.cids.__bytes__() == b'\x01I\x01\xb8'
+                  or chunk.cids.__bytes__() == b'\x02\x80\x04\xed'
+                  or chunk.cids.__bytes__() == b'\x02\xb2\x12I'
+                  or chunk.cids.__bytes__() == b'\x02\xe8\x06\x0e'
+                  or chunk.cids.__bytes__() == b'\x02\xe9\x06\x0e'
+                  or chunk.cids.__bytes__() == b'\x02\xeb\x06\x0e'
+                  or chunk.cids.__bytes__() == b'\x02\xed\x06\x0e'
+                  or chunk.cids.__bytes__() == b'\x02%\x04F'
+                  or chunk.cids.__bytes__() == b'\x02n\x02o\x02\x84'
+                  or chunk.cids.__bytes__() == b'\x02x\x04\xed'
+                  or chunk.cids.__bytes__() == b'\x02z\x04\xed'
+                  or chunk.cids.__bytes__() == b'\x03!'
+                  or chunk.cids.__bytes__() == b'\x04\xaa'
+                  or chunk.cids.__bytes__() == b'\x03w\x03}'
+                  )
+        return not glitch
+
+    @staticmethod
+    def _get_top_left_bak(chunks):
         if len(chunks) == 0:
             return 0, 0
         top = chunks[0].y
         left = chunks[0].x
 
-        for chunk in chunks:
+        for i in range(0, len(chunks)):
+            chunk = chunks[i]
             if chunk.x < left:
                 left = chunk.x
 
@@ -538,7 +833,7 @@ class PdfDecoderForFont():
         self.to_unicode_fixed = to_unicode_fixed or {}
         self.typos = typos or {}
 
-    def to_unicode(self, pikepdf_string):
+    def to_unicode(self, pikepdf_string, apply_fixups=True):
         bytes = pikepdf_string.__bytes__()
         if self.encoding_type == ENCODING_TYPE_2B:
             cids = [bytes[i] << 8 | bytes[i + 1] for i in range(0, len(bytes), 2)]
@@ -549,7 +844,7 @@ class PdfDecoderForFont():
         unicode_text = ""
         for cid in cids:
             try:
-                if cid in self.to_unicode_fixed:
+                if apply_fixups and cid in self.to_unicode_fixed:
                     unicode_text += self.to_unicode_fixed[cid]
                 elif cid in self.to_unicode_map:
                     unicode_text += self.to_unicode_map[cid]
@@ -570,6 +865,7 @@ class PdfDecoderForPage():
             to_unicode_fixed = {}
         self.page = page
         self.page_no = page_no
+        self._chunks_page = None
         self.resources = page["/Resources"]
         self.fonts = self.resources.get("/Font", None)
         self.font_decoders = {}
@@ -616,7 +912,7 @@ class PdfDecoderForPage():
             #                    else:
             #                        print(f"Unexpected operand type: {type(operand)}")
             if DEBUG_PDF:
-                print(f'Operator: {operator}')
+                print(f'Operator: {operator}', file=sys.stderr)
 
             if operator == pikepdf.Operator('BT'):
                 intext = True
@@ -642,7 +938,7 @@ class PdfDecoderForPage():
                 x += operands[0]
                 y += operands[1]
                 if DEBUG_PDF:
-                    print(f"Td: dx={dx} x={operands[0]} y={operands[1]}")
+                    print(f"Td: dx={dx} x={operands[0]} y={operands[1]}", file=sys.stderr)
                 continue
             if operator == pikepdf.Operator('T*'):
                 raise ValueError("Unexpected operator T*")
@@ -656,6 +952,10 @@ class PdfDecoderForPage():
                         if isinstance(operand, pikepdf.String):
                             text = operand
                             font_decoder = self.font_decoders[font]
+                            if DEBUG_PDF:
+                                print(
+                                    f"Tj: x={x} y={y} {text.__bytes__()} -> \"{font_decoder.to_unicode(text)}\", Font: {font_decoder.name}",
+                                    file=sys.stderr)
                             lmbd(text, font_decoder, x, y, dx)
                         else:
                             print(f"Unexpected operand type: {type(operand)}")
@@ -666,10 +966,22 @@ class PdfDecoderForPage():
                                 if isinstance(element, pikepdf.String):
                                     text = element
                                     font_decoder = self.font_decoders[font]
+                                    if DEBUG_PDF:
+                                        print(
+                                            f"TJ: x={x} y={y} {text.__bytes__()} -> \"{font_decoder.to_unicode(text)}\", Font: {font_decoder.name}",
+                                            file=sys.stderr)
                                     lmbd(text, font_decoder, x, y, dx)
                                 elif isinstance(element, int):
+                                    if DEBUG_PDF:
+                                        print(
+                                            f"TJ: x={x} y={y} int={element} -> \"{element}\", Font: {font}",
+                                            file=sys.stderr)
                                     pass
                                 elif isinstance(element, Decimal):
+                                    if DEBUG_PDF:
+                                        print(
+                                            f"TJ: x={x} y={y} Decimal={element} -> \"{element}\", Font: {font}",
+                                            file=sys.stderr)
                                     pass
                                 else:
                                     print(f"Unexpected element type: {type(element)}")
@@ -678,7 +990,8 @@ class PdfDecoderForPage():
                 elif operator == pikepdf.Operator('Tm'):
                     if DEBUG_PDF:
                         print(
-                            f"Tm: 0={operands[0]} 1={operands[1]} 2={operands[2]} 3={operands[3]} 4={operands[4]} 5={operands[5]}")
+                            f"Tm: 0={operands[0]} 1={operands[1]} 2={operands[2]} 3={operands[3]} 4={operands[4]} 5={operands[5]}",
+                            file=sys.stderr)
                     x0 = operands[4]
                     if abs(x0 - x) > -1:
                         # raise ValueError(f"Unexpected operator Tm {self.page_no} x {x} x0 {x0}")
@@ -697,182 +1010,40 @@ class PdfDecoderForPage():
     def debug_text(self):
         self._call_for_tj(self.lmbd_debug)
 
-    def print_positions(self):
-        chunks = []
-        prev_y = 0  # assume there's top
-        prev_x = 785  # assume there's no indent
-        first = True
-
-        def lmbd(text, font_decoder, x, y, dx):
-            nonlocal prev_y
-            nonlocal prev_x
-            nonlocal chunks
-            nonlocal first
-
-            if first:
-                first = False
-                if x > 200:
-                    return
-
-            unicode_text = font_decoder.to_unicode(text)
-
-            if prev_y == -1:
-                dy = 0
-            else:
-                dy = prev_y - y
-            prev_y = y
-
-            if prev_x == -1:
-                dx = 1
-            else:
-                dx = prev_x - x
-            prev_x = x
-
-            print(f"{x}, {y}, {dx}, {dy}, {self.page_no}")
-
+    # TODO: static method?
     def convert_to_chunks_page(self):
         chunks = []
 
         def lmbd(text, font_decoder, x, y, dx):
             nonlocal chunks
+            original_text = font_decoder.to_unicode(text, False)
             unicode_text = font_decoder.to_unicode(text)
-            if DEBUG_PDF:
-                print(f'Tj: x={x} y={y} "{unicode_text}"')
-            chunks.append(Chunk(text, unicode_text, x, y, font_decoder.name, dx))
+            chunks.append(Chunk(text, unicode_text, original_text, x, y, font_decoder.name, dx))
 
         self._call_for_tj(lmbd)
 
-        chunks_page = ChunksPage(chunks)
-        return chunks_page
+        if self._chunks_page is None:
+            self._chunks_page = ChunksPage(chunks)
+        return self._chunks_page
 
     @staticmethod
-    def _separate_headword_and_definition(para_chunks):
-        # join all chunks and divide by space to get words
-        para_words = ' '.join(chunk.text for chunk in para_chunks).split()
-        # assume no headword
-        headword = ''
-        if len(para_words) == 0:
-            return '', ' '.join(para_words).strip()
-
-        # first word is headword
-        headword = para_words[0]
-        if headword.endswith(','):
-            # comma is marker of end of headword
-            # clean it up and return
-            headword = headword[:-1]
-            return headword, ' '.join(para_words[1:]).strip()
-
-        # search for what can be added to headword
-        para_words = para_words[1:]
-        if len(para_words) == 0:
-            print(f"Empty definition for headword: {headword} |{' '.join(para_words)}|", file=sys.stderr)
-            raise ValueError(f"Empty definition for headword: {headword}")
-            return headword, ' '.join(para_words).strip()
-        # check for -ce
-        first_word = para_words[0]
-        if PdfDecoderForPage.is_se(first_word):
-            headword += ' се'
-            # leave comma as the first chart of the next word
-            para_words[0] = para_words[0][2:].strip()
-            if para_words[0] == '' and len(para_words) > 0:
-                para_words = para_words[1:]
-                first_word = para_words[0]
-
-        # if comma is first char in first word, clean it up and return
-        if first_word.startswith(','):
-            # headword ends with comma
-            para_words[0] = para_words[0][1:]
-            if para_words[0] == '' and len(para_words) > 0:
-                para_words = para_words[1:]
-            return headword, ' '.join(para_words).strip()
-
-        # headword can continue with и
-        if first_word.startswith('и ') or first_word == 'и':
-            # skip it and take next word
-            para_words[0] = para_words[0][1:].strip()
-            if para_words[0] == '' and len(para_words) > 0:
-                para_words = para_words[1:]
-            first_word = para_words[0]
-            if not (headword.strip() == first_word.strip()):
-                headword += ' и ' + first_word
-            # next can be comma or -се
-            # if headword ends with comma, clean it up and return
-            if headword.endswith(','):
-                headword = headword[:-1]
-                return headword, ' '.join(para_words[1:]).strip()
-
-            if len(para_words) == 0:
-                return headword, ' '.join(para_words[1:]).strip()
-
-            para_words = para_words[1:]
-            first_word = para_words[0]
-
-            if PdfDecoderForPage.is_se(first_word):
-                headword += ' се'
-                # leave comma as the first chart of the next word
-                para_words[0] = para_words[0][2:]
-                first_word = para_words[0].strip()
-                if first_word == '' and len(para_words) > 0:
-                    para_words = para_words[1:]
-                    first_word = para_words[0]
-
-            # if comma is first char (after -се) in first word, clean it up and return
-            if first_word.startswith(','):
-                # clean up leading comma
-                para_words[0] = para_words[0][1:].split()
-                if first_word == '' and len(para_words) > 0:
-                    para_words = para_words[1:]
-                return headword, ' '.join(para_words).strip()
-
-        return headword, ' '.join(para_words).strip()
-
-    @staticmethod
-    def _chunks_to_entries(chunks, page_no):
-        top, left = PdfDecoderForPage._get_top_left(chunks)
-        first = True
-        p = 0
+    def _paragraphs_to_entries(paragraphs, page_no):
         entries = []
-        while p < len(chunks):
-            p1 = PdfDecoderForPage._next_para_pos_by_interval(p, chunks, left)
-            para_chunks = PdfDecoderForPage._remove_hyphens(chunks[p:p1])
-            para_chunks = PdfDecoderForPage._concat_chunks_by_same_font(para_chunks)
-            para_chunks = PdfDecoderForPage._fix_cyrillic_i(para_chunks)
-            if first:
-                first = False
-                if chunks[p].x - left < 2:
-                    headword = ''
-                    definition = ' '.join(''.join(chunk.text for chunk in para_chunks).split())
-                    entries.append(Entry(headword, definition, page_no))
-                    break
-
-            headword, definition = PdfDecoderForPage._separate_headword_and_definition(para_chunks)
-
-            entries.append(Entry(headword, definition, page_no))
-            p = p1
+        para_no = 0  # debug purposes
+        for paragraph in paragraphs:
+            headword, body = paragraph.headword_and_body(page_no, para_no)
+            entries.append(Entry(headword, body, page_no, para_no, paragraph))
+            para_no += 1
         return entries
-
-    @staticmethod
-    def _paragraph_to_entry(paragraph):
-        print(paragraph)
-
-    @staticmethod
-    def _concatenate_entries(entries1, entries2):
-        if entries2[0].headword is None or entries2[0].headword == "":
-            entries1[-1].definition += entries2[0].definition
-            entries2 = entries2[1:]
-        return entries1 + entries2
 
     # prev_entries is used to concatenate entries from the previous page
     # if the first entry on the current page is a continuation of the last entry on the previous page
     def convert_to_entries(self, prev_entries):
-        chunks_page = self.convert_to_chunks_page()
-        entries1 = PdfDecoderForPage._chunks_to_entries(chunks1, self.page_no)
-        entries2 = PdfDecoderForPage._chunks_to_entries(chunks2, self.page_no)
+        if self._chunks_page is None:
+            self._chunks_page = self.convert_to_chunks_page()
+        chunks_page = self._chunks_page
 
-        if len(entries2) == 0:
-            entries = entries1
-        else:
-            entries = PdfDecoderForPage._concatenate_entries(entries1, entries2)
+        entries = PdfDecoderForPage._paragraphs_to_entries(chunks_page.chunks_paragraphs, self.page_no)
 
         if len(prev_entries) > 0:
             if not entries[0].headword:
@@ -881,31 +1052,83 @@ class PdfDecoderForPage():
 
         return entries
 
+    def title(self):
+        if self._chunks_page is None:
+            self._chunks_page = self.convert_to_chunks_page()
+        return self._chunks_page.title()
+
 
 class Chunk:
-    def __init__(self, cids, text, x, y, font, dx):
-        self.cids = cids
+    def __init__(self, cids, text, original_text, x, y, font, dx):
+        if isinstance(cids, bytes):
+            self.cids = cids
+        else:
+            self.cids = cids.__bytes__()
         self.text = text
+        self.original_text = original_text
         self.x = float(x)
         self.y = float(y)
         self.font = font
         self.dx = float(dx)
 
     def __str__(self):
-        return f'"{self.text}" x: {self.x} y: {self.y} font: {self.font} dx: {self.dx} cids: {self.cids}'
+        return f'"{self.text}"/"{self.original_text}" x: {self.x} y: {self.y} font: {self.font} dx: {self.dx} cids: {self.cids.__bytes__()}'
 
     def __repr__(self):
-        return f'Chunk({self.cids.__bytes__()}, "{self.text}", {self.x}, {self.y}, {self.font}, {self.dx})'
+        return f'Chunk({self.cids.__bytes__()}, "{self.text}", "{self.original_text}", {self.x}, {self.y}, {self.font}, {self.dx})'
 
     def copy(self):
-        return Chunk(self.cids, self.text, self.x, self.y, self.font, self.dx)
+        return Chunk(self.cids, self.text, self.original_text, self.x, self.y, self.font, self.dx)
+
+    def copy_without_first_2bytes(self):
+        # TODO: make sure the font is 2 bytes
+        if len(self.cids) < 2:
+            return self.copy()
+        return Chunk(self.cids[2:], self.text[1:], self.original_text[1:], self.x, self.y, self.font, self.dx)
+
+    def is_empty(self):
+        return len(self.cids) == 0
+
+    def startswith(self, char, font=None):
+        if isinstance(char, bytes):
+            if font is not None and self.font != font:
+                return False
+            if len(char) > len(self.cids):
+                return False
+            for i in range(len(char)):
+                if self.cids[i] != char[i]:
+                    return False
+            return True
+        else:
+            return self.text.startswith(char)
+
+    def has_leading_glitches(self):
+        res = (False
+               or self.startswith(b'\n"', '/C0_3')
+               or self.startswith(b'\n"', '/C0_5')
+               or self.startswith(b'\x00~', '/C0_0')
+               or self.startswith(b'\x01*', '/C0_3')
+               or self.startswith(b'\x007', '/C0_3')
+               or self.startswith(b'\x01\x9d', '/C0_8')
+               or self.startswith(b'\x01\xaf', '/C0_5')
+               or self.startswith(b'\x01\xe1', '/C0_0')
+               or self.startswith(b'\x01\xf9', '/C0_0')
+               or self.startswith(b'\x02\x94', '/C0_0')
+               or self.startswith(b'\x03*', '/C0_0')
+               or self.startswith(b'\x03*', '/C0_5')
+               or self.startswith(b'\x03\x0c', '/C0_10')
+               or self.startswith('.')
+               or self.startswith(','))
+        return res
 
 
 class Entry:
-    def __init__(self, headword, definition, page_no):
+    def __init__(self, headword, definition, page_no, entry_no, paragraph):
         self.headword = headword.strip()
         self.definition = definition.strip()
         self.page_no = page_no
+        self.entry_no = entry_no
+        self.paragraph = paragraph
 
     def __str__(self):
         return f'/{self.headword}/({self.page_no})\n{self.definition}'
@@ -913,340 +1136,125 @@ class Entry:
     def __repr__(self):
         return f'Entry("{self.headword}", "{self.definition}", {self.page_no})'
 
-    def txt(self, headword_separator=' '):
-        return f'{self.headword}{headword_separator}{self.definition}{headword_separator}{self.page_no}'
+    def txt(self, separator=' '):
+        return f'{self.headword}{separator}{self.definition}{separator}{self.page_no}{separator}{self.entry_no}'
+
+    def debug(self):
+        print("-------------------------------------")
+        print(f"Page:       {self.page_no}")
+        print(f"Entry no:   {self.entry_no}")
+        print(f"Headword:   {self.headword}")
+        print(f"Definition: {self.definition}")
+        print(f"Lines:")
+        for line in self.paragraph.lines:
+            print(f"==> ", end='')
+            for chunk in line:
+                if chunk.original_text == chunk.text:
+                    text = chunk.text
+                else:
+                    text = f"{chunk.original_text}>{chunk.text}"
+                print(f"{chunk.font}:{self.fcids(chunk.cids)}[{text}]", end=',  ')
+            print()
+
+    @staticmethod
+    def fcids(cids):
+        s = str(cids)
+        return s[2:-1]
 
 
-class PdfDecoderForFile():
+class PdfDecoderForFile:
     def __init__(self, pdf_file):
         self.pdf_file = pdf_file
 
-    def each(self, lmbda, debug=True):
+    def check_titles(self):
+        with pikepdf.open(self.pdf_file) as pdf:
+            for n, page in enumerate(pdf.pages):
+                if n < 16:
+                    continue
+                if n > 1528:
+                    break
+                title = re.split(r'[ \-]', PdfDecoderForPage(page, n).title())
+                if len(title) < 3:
+                    print(f"{{{n}:'{title}'}}")
+
+    # from and to are page numbers inclusive..exclusive (as in range)
+    def each(self, lmbda, f=16, t=1528):
         with pikepdf.open(self.pdf_file) as pdf:
             prev_entries = []
-            for n, page in enumerate(pdf.pages, start=1):
-                if n < 17:
+            for n, page in enumerate(pdf.pages):
+                if n < f:
                     continue
-                if n > 1529:
+                if n > t:
                     break
-                if (debug and page["/Resources"].get("/Font", None) is None):
+                if False and page["/Resources"].get("/Font", None) is None:
                     print(f"No fonts found in page resources for page: {n}", file=sys.stderr)
                     continue
+                if debug_progress:
+                    print(f"Page: {n}", end=' ', file=sys.stderr)
                 decoder = PdfDecoderForPage(page, n, fixes, typos)
+                if debug_progress:
+                    print(decoder.title(), file=sys.stderr)
+
                 entries = decoder.convert_to_entries(prev_entries)
-                if debug:
-                    print(f"Page {n}: {entries[0].headword}", file=sys.stderr)
                 prev_entries = entries
                 for entry in entries:
-                    if entry.headword:
+                    if entry.headword is not None:
                         lmbda(entry)
                     else:
                         raise ValueError(f"Entry without headword: {entry}")
 
-
-def bytes2cid(b):
-    return b[0] << 8 | b[1]
-
-
-fixes = {
-    '/C0_0': {
-        bytes2cid(b'\x00b'): '~',
-        bytes2cid(b'\x00['): 'а',
-        bytes2cid(b'\x00e'): '~',
-        # bytes2cid(b'\x00\x0b'): '~', breaks p23. ајурведски -а, -о који се односи на ајурведу: медицина.
-        bytes2cid(b'\x00\r'): '~',
-        bytes2cid(b'\x00\x13'): '~',
-        bytes2cid(b'\x00\xb8'): 'и',
-        bytes2cid(b'\x00\xd0'): 'и',
-        bytes2cid(b'\x01\xb5'): 'л',
-    },
-    '/C0_1': {
-        bytes2cid(b'\x00"'): 'ш',
-        bytes2cid(b'\x00|'): 'с',
-        # bytes2cid(b'\x08<'): 'к',!!!
-        bytes2cid(b'\x00f'): 'и',
-        bytes2cid(b'\x00h'): 'к',
-        bytes2cid(b'\x00r'): 'к',
-        bytes2cid(b'\x00t'): 'е',
-        bytes2cid(b'\x01j'): 'ц',
-        bytes2cid(b'\x02+'): 'и',
-        bytes2cid(b'\x04l'): 'д',
-        bytes2cid(b'\x00\x7f'): 'д',
-        bytes2cid(b'\x00\x83'): 'н',
-        bytes2cid(b'\x00\x8f'): 'и',
-        bytes2cid(b'\x00\x95'): 'о',
-        bytes2cid(b'\x00\x9e'): 'т',
-        bytes2cid(b'\x00\x0c'): 'д',
-        bytes2cid(b'\x00\xa2'): '~',
-        bytes2cid(b'\x00\xac'): 'л',
-        bytes2cid(b'\x00\xb9'): 'д',
-        bytes2cid(b'\x00\xd5'): 'и',
-        bytes2cid(b'\x00\xfa'): 'ч',
-        bytes2cid(b'\x01\x02'): 'у',
-        bytes2cid(b'\x01\x07'): 'б',
-        bytes2cid(b'\x02\xa8'): 'лингв',
-        bytes2cid(b'\x02\x9f'): 'к',
-        bytes2cid(b'\x03\x86'): '.',
-        bytes2cid(b'\x04\x16'): 'и',
-        bytes2cid(b'\x04\x85'): 'и',
-        bytes2cid(b'\x04\xbe'): 'ак',
-        bytes2cid(b'\x04\xbf'): 'и',
-    },
-    '/C0_2': {
-        bytes2cid(b'\x00|'): 'с',
-        bytes2cid(b'\x00.'): 'мн',
-        bytes2cid(b'\x00F'): 'е',
-        bytes2cid(b'\x00t'): 'е',
-        bytes2cid(b'\x01l'): 'д',
-        bytes2cid(b'\x01Z'): 'и',
-        bytes2cid(b'\x00\x01'): 'а',
-        bytes2cid(b'\x00\x19'): 'ј',
-        bytes2cid(b'\x00\xa9'): 'р',
-        bytes2cid(b'\x00\xb3'): 'к',
-        bytes2cid(b'\x00\xbe'): 'в',
-        bytes2cid(b'\x01\x02'): 'у',
-
-        # bytes2cid(b'\x00\x07'): '?',
-    },
-    '/C0_3': {
-        bytes2cid(b'\nP'): 'с',
-        bytes2cid(b'\no'): 'у',
-        bytes2cid(b'\rh'): 'п',
-        bytes2cid(b'\n+'): 'о',
-        bytes2cid(b'\n\x14'): 'н',
-        bytes2cid(b'\n\xa4'): 'т',
-        bytes2cid(b'\n\xcb'): 'а',
-        bytes2cid(b'\t\xd7'): 'п',
-        bytes2cid(b'\x000'): 'п',
-        bytes2cid(b'\x00V'): 'п',
-        bytes2cid(b'\x01d'): '1',
-        bytes2cid(b'\x04l'): 'н',
-        bytes2cid(b'\x05m'): 'ал',
-        # bytes2cid(b'\x08^'): 'лингв', broken
-        bytes2cid(b'\x08^'): 'и',  # p21, ајурведски ... односи,
-        bytes2cid(b'\x0cP'): 'с',
-        bytes2cid(b'\x0f-'): 'р',
-        # bytes2cid(b'\x00\t'): 'с', #!!!
-        bytes2cid(b'\x00\r'): 'ен',
-        # bytes2cid(b'\x00\t'): 'в, #p21 агресивност, -ости
-        bytes2cid(b'\x00\x08'): 'т',
-        bytes2cid(b'\x00\x0c'): 'д',
-        # bytes2cid(b'\x00\x16'): 'т', # 'з', /адмирал/(21) ...  2. тоол. врста
-        bytes2cid(b'\x00\xff'): 'љ',
-        bytes2cid(b'\x02\x13'): '',
-        bytes2cid(b'\x04\xa4'): 'к',
-        bytes2cid(b'\x06\x10'): 'д',
-        # bytes2cid(b'\x0f\x83'): 'ј',
-        bytes2cid(b'\x10\xcf'): 'е',
-        bytes2cid(b'\x10\xd1'): 'т',
-        bytes2cid(b'\x12G'): 'в',
-        # bytes2cid(b'\x0c\xf4'): 'ни',
-    },
-    '/C0_4': {
-        bytes2cid(b'\n+'): 'о',
-        bytes2cid(b'\rh'): 'п',
-        bytes2cid(b'\nP'): 'с',
-        bytes2cid(b'\no'): 'у',
-        bytes2cid(b'\n\x14'): 'н',
-        bytes2cid(b'\n\xa4'): 'т',
-        bytes2cid(b'\n\xb0'): 'и',
-        bytes2cid(b'\r\x92'): 'т',
-        bytes2cid(b'\r\xa2'): 'тл',
-        bytes2cid(b'\t\x88'): 'љ',
-        bytes2cid(b'\t\xc4'): 'ж',
-        bytes2cid(b'\t\xd7'): 'п',
-        bytes2cid(b'\t\xef'): 'к',
-        bytes2cid(b'\x00;'): 'г',
-        bytes2cid(b'\x00:'): 'г',
-        bytes2cid(b'\x00y'): '~',
-        bytes2cid(b'\x01_'): 'к',
-        bytes2cid(b'\x02&'): '.',
-        bytes2cid(b'\x04j'): 'н',
-        bytes2cid(b'\x04l'): 'н',
-        bytes2cid(b'\x03O'): 'к',
-        bytes2cid(b'\x04U'): 'с',
-        bytes2cid(b'\x05I'): 'а',
-        bytes2cid(b'\x05o'): 'ам',
-        bytes2cid(b'\x07?'): 'г',
-        # bytes2cid(b'\x00\x01'): '', #p21 агресивност, -ости {ж}
-        bytes2cid(b'\x00\x12'): '~',
-        bytes2cid(b'\x00\x17'): 'г',
-        bytes2cid(b'\x04\xb1'): 'м',
-        bytes2cid(b'\x04\xe9'): 'и',
-        bytes2cid(b'\x04\xa4'): 'к',
-        bytes2cid(b'\x04\xc0'): 'о',
-        bytes2cid(b'\x05\xb7'): 'в',
-        bytes2cid(b'\x05\xf1'): 'гл',
-        bytes2cid(b'\x06<'): 'ћ',
-        bytes2cid(b'\x06\x10'): 'д',
-        bytes2cid(b'\x05\xee'): 'г',
-        bytes2cid(b'\x05\xeb'): 'г',
-        bytes2cid(b'\x08^'): 'и',
-        bytes2cid(b'\x0c '): 'ил',
-        bytes2cid(b'\x0c\x9a'): 'ељ',
-        bytes2cid(b'\x0e\x1e'): 'пл',
-        bytes2cid(b'\x10\xd1'): 'т',
-
-        bytes2cid(b'\t\xf8'): 'л',
-
-    },
-    '/C0_5': {
-        bytes2cid(b'\nF'): 'р',
-        bytes2cid(b'\nP'): 'с',
-        bytes2cid(b'\n\xa4'): 'т',
-        bytes2cid(b'\t\x88'): 'љ',
-        bytes2cid(b'\t\xd7'): 'п',
-        bytes2cid(b'\x00y'): '~',
-        bytes2cid(b'\x00\x9e'): '~',
-
-        # bytes2cid(b'\n\x9e'): 'н', #useless
-        bytes2cid(b'\x03`'): 'н',
-        bytes2cid(b'\x004`'): 'г',
-        bytes2cid(b'\x10\xd1`'): 'т',
-        bytes2cid(b'\x03)'): 'о',
-        bytes2cid(b'\x03\xd1'): ':',
-
-        bytes2cid(b'\x08\xe6'): 'имљ',  # p20 /агресивност/(20)
-        # bytes2cid(b'\x0c\xf4'): 'и', #p20 /агресивност/(20)
-        # bytes2cid(b'\x0b\xe4'): 'љ',
-    },
-    '/C0_6': {
-        bytes2cid(b'\x00\1b'): '~',
-    },
-    '/C0_7': {
-        bytes2cid(b'\x00\x0b'): '~',
-    },
-    '/C0_8': {
-        bytes2cid(b'\x00\x04'): 'а',
-        bytes2cid(b'\x02\xfa'): 'ш',
-    },
-    '/C0_9': {
-        bytes2cid(b'\x00\x8e'): '~',
-    },
-    '/C0_10': {
-        # bytes2cid(b'\x00\x04'): 'ц', #!!!!
-        bytes2cid(b'\x00\x04'): 'е',  # !!!!
-        bytes2cid(b'\x00\x1c'): ',',
-        bytes2cid(b'\x01H'): 'р',
-        bytes2cid(b'\x01\x12'): 'и',
-        bytes2cid(b'\x021'): 'е',
-        bytes2cid(b'\x03`'): 'д',
-    }
-}
-typos = {
-    # '/C0_4': mongodb://localhost:27017/{
-    #    'cамoгаcник ': 'самогласник ',
-    # }
-}
-
-
-class Th:
-    def __init__(self, pos, expected):
-        self.pos = pos
-        self.expected = expected
-
-
-def test_page_chunks(page_no, expected_title, expected_paragraphs, headwords):
-    print("Testing page", page_no)
-    with pikepdf.open(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf')) as pdf:
-        page = pdf.pages[page_no]
-        decoder = PdfDecoderForPage(page, page_no)
-        chunks_page = decoder.convert_to_chunks_page()
-
-        print("Title exists:", end=" ")
-        if len(chunks_page.chunks_title) > 0:
-            print("PASSED")
-        else:
-            print("FAILED")
-
-        print("Expected title:", expected_title, end=" ")
-        title_foo = chunks_page.title()
-        title = chunks_page.title()
-        if title == expected_title:
-            print("PASSED")
-        else:
-            print("FAILED. Actual title:", title)
-
-        print("Number of paragraphs:", end=" ")
-        if len(chunks_page.chunks_paragraphs) == expected_paragraphs:
-            print("PASSED")
-        else:
-            print(f"FAILED. Expected: {expected_paragraphs} Actual: ", len(chunks_page.chunks_paragraphs))
-
-        for test in headwords:
-            i = test.pos
-            headword = test.expected
-            print(f"Headword {i}:", end=" ")
-            headword1, _ = chunks_page.chunks_paragraphs[i].headword_and_body()
-            if headword1 == headword:
-                print(f"PASSED {headword1}")
+    def debug_entry(self, page_no, entry_no_or_headword):
+        def lmbd(entry):
+            if isinstance(entry_no_or_headword, int):
+                if entry.entry_no == entry_no_or_headword:
+                    entry.debug()
+            elif isinstance(entry_no_or_headword, str):
+                if entry.headword == entry_no_or_headword:
+                    entry.debug()
             else:
-                print(f'FAILED. Expected: "{headword}" Actual: "{headword1}"')
+                raise ValueError(f"Unexpected type: {type(entry_no_or_headword)}")
 
+        self.each(lmbd, page_no, page_no)
 
-if __name__ == '__main__':
-    import argparse
-    import sys
-    import time
+    def print_txt(self, f=16, t=1528):
+        self.each(lambda entry: print(entry.txt()), f, t)
 
-    parser = argparse.ArgumentParser(description='Парсер за Матицу Српску')
+    def print_csv(self, f=16, t=1528):
+        print("headword\tdefinition\tpage\tpara")
+        self.each(lambda entry: print(entry.txt('\t')), f, t)
 
-    parser.add_argument('--debug', action='store_true',
-                        help='Приказивање дебаг информација')
-    parser.add_argument('--positions', action='store_true',
-                        help='Приказивање позиција у PDF-у')
-    parser.add_argument('--full-search-txt', action='store_true',
-                        help='Екстракција свих страна из PDF-а у текстуални фајл')
-    parser.add_argument('--full-search-csv', action='store_true',
-                        help='Екстракција свих страна из PDF-а у SCV фајл')
-    parser.add_argument('--full-search-json', action='store_true',
-                        help='Екстракција свих страна из PDF-а у JSON фајл')
-    parser.add_argument('--mongodb-connection-string', default=None,
-                        help='Екстракција свих страна из PDF-а у mongodb')
-    parser.add_argument('--firebase-service-account-key-json', default=None,
-                        help='Екстракција свих страна из PDF-а у firebase real-time database')
-
-    args = parser.parse_args()
-
-    convertor = PdfDecoderForFile(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf'))
-
-    if args.full_search_txt:
-        convertor.each(lambda entry: print(entry.txt), args.debug)
-        exit(0)
-
-    if args.positions:
-        print('Not implemented')
-        exit(1)
-
-    if args.full_search_csv:
-        print("headword\tdefinition\tpage")
-        convertor.each(lambda entry: print(entry.txt('\t')), args.debug)
-        exit(0)
-
-    if args.full_search_json:
-        global json_key
+    def print_json(self, f=16, t=1528):
         json_key = 0
-
+        j = {}
 
         def process_entries_json(entry):
-            global json_key
-            if json_key > 0:
-                print(",")
-            print(
-                f'   "{json_key}": {{"headword": "{entry.headword.replace('"', '\\"')}", "definition": "{entry.definition.replace('"', '\\"')}", "page": {entry.page_no}}}',
-                end="")
+            nonlocal json_key
+            j[json_key] = {
+                "headword": entry.headword,
+                "definition": entry.definition,
+                "page": entry.page_no
+            }
             json_key += 1
 
+        #        def process_entries_json(entry):
+        #            nonlocal json_key
+        #            if json_key > 0:
+        #                print(",")
+        #            m = {json_key: {
+        #                "headword": entry.headword,
+        #                "definition": entry.definition,
+        #                "page": entry.page_no
+        #            }}
+        #            print(json.dumps(m, indent=4, ensure_ascii=False), end="")
+        #            json_key += 1
+        # print("{")
+        # self.each(process_entries_json, args.debug)
+        # print("}")
+        self.each(process_entries_json, f, t)
+        json.dump(j, sys.stdout, indent=2, ensure_ascii=False)
 
-        print("{")
-        convertor.each(process_entries_json, args.debug)
-        print("}")
-        exit(0)
-
-    if args.mongodb_connection_string:
-        from pymongo import MongoClient
-
-        client = MongoClient(args.mongodb_connection_string)
+    def export_mongodb(self, connection_string, f=16, t=1528):
+        client = MongoClient(connection_string)
         db = client.matica
         collection = db.entries
         collection.drop()
@@ -1274,7 +1282,6 @@ if __name__ == '__main__':
             }
         )
 
-
         def process_entries_mongodb(entry):
             # Insert into MongoDB collection
             collection.insert_one({
@@ -1283,24 +1290,21 @@ if __name__ == '__main__':
                 'page': str(entry.page_no)  # Ensure page_no is converted to a string
             })
 
+        self.each(process_entries_mongodb, f, t)
 
-        convertor.each(process_entries_mongodb, args.debug)
-        exit(0)
-
-    if args.firebase_service_account_key_json:
-        import firebase_admin
+    def export_firebase(self, connection_string, f=16, t=1528):
         from firebase_admin import credentials
         from firebase_admin import db
 
-        credentials = credentials.Certificate(args.firebase_service_account_key_json)
+        credentials = credentials.Certificate(connection_string)
         firebase_admin.initialize_app(credentials, {
+            # TODO: should be picked up from json?
             'databaseURL': 'https://matica-srpska-sy4-default-rtdb.europe-west1.firebasedatabase.app'
         })
 
         entries_ref = db.reference('entries')
         # search by headword is not good idea, because they are not unique
         entries_ref.delete()
-
 
         def process_entries_rtdb(entry):
             # start_time = time.time()
@@ -1323,9 +1327,550 @@ if __name__ == '__main__':
             # execution_time = end_time - start_time
             # print(f"Execution time ref.set ({entry.headword}): {execution_time} seconds")
 
+        self.each(process_entries_rtdb, f, t)
 
-        convertor.each(process_entries_rtdb(), args.debug)
+
+def bytes2cid(b):
+    return b[0] << 8 | b[1]
+
+
+fixes = {
+    '/C0_0': {
+        bytes2cid(b'\x00b'): '~',
+        bytes2cid(b'\x00['): 'а',
+        bytes2cid(b'\x00e'): '~',
+        # bytes2cid(b'\x00\x0b'): '~', breaks p23. ајурведски -а, -о који се односи на ајурведу: медицина.
+        bytes2cid(b'\x00\r'): '~',
+        bytes2cid(b'\x00\x13'): '~',
+        bytes2cid(b'\x00\xb8'): 'и',
+        bytes2cid(b'\x00\xd0'): 'и',
+        bytes2cid(b'\x01\xb5'): 'л',
+    },
+    '/C0_1': {
+        #bytes2cid(b'\x00"'): 'ш',
+        #bytes2cid(b'\x00"'): 'а', # 16:7 аБДИRација >абдикација - not needed
+        #bytes2cid(b'\x00"'): 'ш', # 17:14 ^[дошао. >доаао. ] - not needed
+        bytes2cid(b'\x00|'): 'с',
+        # bytes2cid(b'\x08<'): 'к',!!!
+        bytes2cid(b'\x00f'): 'и',
+        bytes2cid(b'\x00h'): 'к',
+        bytes2cid(b'\x00r'): 'к',
+        #bytes2cid(b'\x00t'): 'е', # 17:14 [речце: >речцее ],
+        bytes2cid(b'\x00\x14'): '~',
+        bytes2cid(b'\x00\x7f'): 'д',
+        bytes2cid(b'\x00\x83'): 'н',
+        bytes2cid(b'\x00\x8f'): 'и',
+        bytes2cid(b'\x00\x95'): 'о',
+        bytes2cid(b'\x00\x9e'): 'т',
+        bytes2cid(b'\x00\x0c'): 'д',
+        bytes2cid(b'\x00\xa2'): '~',
+        bytes2cid(b'\x00\xa7'): 'а',
+        bytes2cid(b'\x00\xac'): 'л',
+        bytes2cid(b'\x00\xb9'): 'д',
+        bytes2cid(b'\x00\xbd'): 'и',
+        bytes2cid(b'\x00\xd5'): 'и',
+        bytes2cid(b'\x00\xfa'): 'ч',
+        bytes2cid(b'\x01j'): 'ц',
+        bytes2cid(b'\x01\x02'): 'у',
+        bytes2cid(b'\x01\x07'): 'б',
+        bytes2cid(b'\x01\xd6'): 'о',
+        bytes2cid(b'\x02+'): 'и',
+        bytes2cid(b'\x02\xa8'): 'лингв',
+        bytes2cid(b'\x02\x9f'): 'к',
+        bytes2cid(b'\x03\x86'): '.',
+        bytes2cid(b'\x04l'): 'д',
+        bytes2cid(b'\x04\x16'): 'и',
+        bytes2cid(b'\x04\x85'): 'и',
+        bytes2cid(b'\x04\xbe'): 'ак',
+        bytes2cid(b'\x04\xbf'): 'и',
+
+        #bytes2cid(b'\x01\xff'): '@1',
+        #bytes2cid(b'\x00\x07'): '@3',
+        #bytes2cid(b'\x00\x07'): '@3',
+    },
+    '/C0_2': {
+        bytes2cid(b'\x00|'): 'с',
+        bytes2cid(b'\x00.'): 'мн',
+        bytes2cid(b'\x00F'): 'е',
+        bytes2cid(b'\x01Z'): 'и',
+        bytes2cid(b'\x00t'): 'е',
+        #bytes2cid(b'\x00\x01'): 'а', !16:7 ж >а
+        bytes2cid(b'\x00\x19'): 'ј',
+        bytes2cid(b'\x00\xa9'): 'р',
+        bytes2cid(b'\x00\xb3'): 'к',
+        bytes2cid(b'\x00\xbe'): 'в',
+        bytes2cid(b'\x01l'): 'д',
+        bytes2cid(b'\x01\x02'): 'у',
+
+        # bytes2cid(b'\x00\x07'): '?',
+    },
+    '/C0_3': {
+        bytes2cid(b'\nP'): 'с',
+        bytes2cid(b'\no'): 'у',
+        bytes2cid(b'\rh'): 'п',
+        bytes2cid(b'\n+'): 'о',
+        bytes2cid(b'\n\x14'): 'н',
+        bytes2cid(b'\n\xa4'): 'т',
+        bytes2cid(b'\n\xcb'): 'а',
+        bytes2cid(b'\n\xe4'): 'п',
+        bytes2cid(b'\t\xd7'): 'п',
+        bytes2cid(b'\x000'): 'п',
+        bytes2cid(b'\x06<'): 'ћ',
+        # bytes2cid(b'\x08^'): 'лингв', broken
+        bytes2cid(b'\x08]'): 'п',
+        # bytes2cid(b'\x00\r'):
+        bytes2cid(b'\x00\t'): 'с', # 16:9 [евр. >свр. ]
+        # bytes2cid(b'\x00\t'): 'в, #p21 агресивност, -ости
+        bytes2cid(b'\x00V'): 'п',
+        bytes2cid(b'\x00\x08'): 'т',
+        bytes2cid(b'\x00\x0c'): 'д',
+        bytes2cid(b'\x00\xa3'): 'г',
+        # bytes2cid(b'\x00\x16'): 'т', # 'з', /адмирал/(21) ...  2. тоол. врста
+        bytes2cid(b'\x00\xff'): 'љ',
+        bytes2cid(b'\x01d'): '1',
+        bytes2cid(b'\x02\x13'): '',
+        bytes2cid(b'\x04l'): 'н',
+        bytes2cid(b'\x04\xa4'): 'к',
+        bytes2cid(b'\x04\xe8'): 'п',
+        bytes2cid(b'\x05m'): 'ал',
+        bytes2cid(b'\x06\x10'): 'д',
+        bytes2cid(b'\x08^'): 'и',  # p21, ајурведски ... односи,
+        bytes2cid(b'\x0b\xa8'): 'аљ',  # p21, ајурведски ... односи,
+        bytes2cid(b'\x0cP'): 'с',
+        bytes2cid(b'\x0f-'): 'р',
+        # bytes2cid(b'\x0f\x83'): 'ј',
+        # bytes2cid(b'\x0c\xf4'): 'ни',
+        bytes2cid(b'\x10\xcf'): 'е',
+        bytes2cid(b'\x10\xd1'): 'т',
+        bytes2cid(b'\x12G'): 'в',
+    },
+    '/C0_4': {
+        bytes2cid(b'\n+'): 'о',
+        bytes2cid(b'\nP'): 'с',
+        bytes2cid(b'\no'): 'у',
+        bytes2cid(b'\n\x14'): 'н',
+        bytes2cid(b'\n\xa4'): 'т',
+        bytes2cid(b'\n\xb0'): 'и',
+        bytes2cid(b'\rh'): 'п',
+        bytes2cid(b'\r\x92'): 'т',
+        bytes2cid(b'\r\xa2'): 'тл',
+        bytes2cid(b'\t\x88'): 'љ',
+        bytes2cid(b'\t\xc4'): 'ж',
+        bytes2cid(b'\t\xd7'): 'п',
+        bytes2cid(b'\t\xef'): 'к',
+        bytes2cid(b'\t\xf8'): 'л',
+        bytes2cid(b'\x00;'): 'г',
+        bytes2cid(b'\x00:'): 'г',
+        bytes2cid(b'\x00y'): '~',
+        bytes2cid(b'\x00\t'): 'с',
+        bytes2cid(b'\x00\x12'): '~',
+        bytes2cid(b'\x00\x17'): 'г',
+        bytes2cid(b'\x01_'): 'к',
+        bytes2cid(b'\x02&'): '.',
+        bytes2cid(b'\x02\xb8'): '', # 16:9 [. > ]
+        bytes2cid(b'\x03O'): 'к',
+        bytes2cid(b'\x03)'): 'о',
+        bytes2cid(b'\x03\xc9'): 'д',
+        bytes2cid(b'\x04j'): 'н',
+        bytes2cid(b'\x04l'): 'н',
+        bytes2cid(b'\x04U'): 'с',
+        bytes2cid(b'\x04\xb1'): 'м',
+        bytes2cid(b'\x04\xe9'): 'и',
+        bytes2cid(b'\x04\xa4'): 'к',
+        bytes2cid(b'\x04\xc0'): 'о',
+        bytes2cid(b'\x05I'): 'а',
+        bytes2cid(b'\x05o'): 'ам',
+        bytes2cid(b'\x05\xb7'): 'в',
+        bytes2cid(b'\x05\xf1'): 'гл',
+        bytes2cid(b'\x05\xee'): 'г',
+        bytes2cid(b'\x05\xeb'): 'г',
+        # bytes2cid(b'\x00\x01'): '', #p21 агресивност, -ости {ж}
+        bytes2cid(b'\x06<'): 'ћ',
+        bytes2cid(b'\x06\x10'): 'д',
+        bytes2cid(b'\x07?'): 'г',
+        bytes2cid(b'\x08^'): 'и',
+        bytes2cid(b'\x0c '): 'ил',
+        bytes2cid(b'\x0c\x9a'): 'ељ',
+        bytes2cid(b'\x0e\x1e'): 'пл',
+        bytes2cid(b'\x10\xd1'): 'т',
+
+
+    },
+    '/C0_5': {
+        bytes2cid(b'\nF'): 'р',
+        bytes2cid(b'\nP'): 'с',
+        bytes2cid(b'\n\xa4'): 'т',
+        bytes2cid(b'\t\x88'): 'љ',
+        bytes2cid(b'\t\xd7'): 'п',
+        bytes2cid(b'\x00y'): '~',
+        bytes2cid(b'\x00\x9e'): '~',
+
+        # bytes2cid(b'\n\x9e'): 'н', #useless
+        bytes2cid(b'\x03`'): 'н',
+        bytes2cid(b'\x004`'): 'г',
+        bytes2cid(b'\x10\xd1`'): 'т',
+        bytes2cid(b'\x03)'): 'о',
+        bytes2cid(b'\x03\xd1'): ':',
+
+        bytes2cid(b'\x08\xe6'): 'имљ',  # p20 /агресивност/(20)
+        # bytes2cid(b'\x0c\xf4'): 'и', #p20 /агресивност/(20)
+        # bytes2cid(b'\x0b\xe4'): 'љ',
+    },
+    '/C0_6': {
+        bytes2cid(b'\x00\1b'): '~',
+    },
+    '/C0_7': {
+        bytes2cid(b'\x00\x0b'): '~',
+        bytes2cid(b'\x00\x07'): 'л',
+        bytes2cid(b'\x001'): 'с',
+    },
+    '/C0_8': {
+        bytes2cid(b'\x00.'): 'у',
+        bytes2cid(b'\x00\x04'): 'а',
+        bytes2cid(b'\x00\x14'): 'з',
+        bytes2cid(b'\x00\x1c'): 'в',
+        bytes2cid(b'\x02\xfa'): 'ш',
+    },
+    '/C0_9': {
+        bytes2cid(b'\x00\x8e'): '~',
+    },
+    '/C0_10': {
+        # bytes2cid(b'\x00\x04'): 'ц', #!!!!
+        #bytes2cid(b'\x00 '): '@1',
+        bytes2cid(b'\x00A'): 'и',
+        bytes2cid(b'\x00\t'): 'ијс', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        bytes2cid(b'\x00\x04'): 'е',
+        bytes2cid(b'\x00\x13'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        #bytes2cid(b'\x00\x1c'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        bytes2cid(b'\x00\x1c'): ',',
+        bytes2cid(b'\x01H'): 'р',
+        bytes2cid(b'\x01\x12'): 'и',
+        #bytes2cid(b'\x01\x12'): 'а',
+        bytes2cid(b'\x021'): 'е',
+        bytes2cid(b'\x02\xcc'): 'ац', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        bytes2cid(b'\x03`'): 'д',
+
+        #bytes2cid(b'\x00O'): '@2', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+    }
+}
+typos = {
+    # '/C0_4': mongodb://localhost:27017/{
+    #    'cамoгаcник ': 'самогласник ',
+    # }
+}
+
+
+class Th:
+    def __init__(self, pos, expected_headword, expected_body=None):
+        self.pos = pos
+        self.expected_headword = expected_headword
+        self.expected_body = expected_body
+
+
+def test_page_entries(page_no, expected_title, expected_entries, test_entries):
+    print("Testing entries, page", page_no)
+    with pikepdf.open(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf')) as pdf:
+        page = pdf.pages[page_no]
+        # decoder = PdfDecoderForPage(page, page_no, fixes, typos)
+        decoder = PdfDecoderForPage(page, page_no)  # no fixes for easier comparision with PDF
+        entries = decoder.convert_to_entries([])
+
+        print("Expected title:", expected_title, end=" ")
+        title_foo = decoder.title()
+        title = decoder.title()
+        expected_title = fix_cyrillic(expected_title)
+        if title == expected_title:
+            print("PASSED")
+        else:
+            print("FAILED. Actual title:", title)
+            raise ValueError(f"Expected title: {expected_title} Actual title: {title}")
+
+        for test in test_entries:
+            i = test.pos
+            headword = fix_cyrillic(test.expected_headword)
+            print(f"Headword {i}:", end=" ")
+            if entries[i].headword == headword:
+                print(f"PASSED {headword}")
+            else:
+                print(f'FAILED. Expected: "{headword}" Actual: "{entries[i].headword}"')
+                raise ValueError(f'Expected: "{headword}" Actual: "{entries[i].headword}"')
+            if test.expected_body:
+                body = fix_cyrillic(test.expected_body)
+                print(f"Body {i}:", end=" ")
+                if entries[i].definition == body:
+                    print(f"PASSED {body}")
+                else:
+                    print(f'FAILED. Expected: "{body}" Actual: "{entries[i].definition}"')
+                    for j in range(len(body)):
+                        if entries[i].definition[j] != body[j]:
+                            print(
+                                f'FAILED. at pos {j}:{body[j]}/{entries[i].definition[j]} Expected: "{body[j - 5:j + 5]}" Actual: "{entries[i].definition[j - 5:j + 5]}"')
+                            break
+                    raise ValueError(f'Expected: "{body}" Actual: "{entries[i].definition}"')
+
+        print("Number of entries:", end=" ")
+        if len(entries) == expected_entries:
+            print("PASSED")
+        else:
+            print(f"FAILED. Expected: {expected_entries} Actual: ", len(entries))
+            raise ValueError(f"Expected entries: {expected_entries} Actual entries: {len(entries)}")
+
+
+def test_page_chunks(page_no, expected_title, expected_paragraphs, headwords):
+    print("Testing paragraphs, page", page_no)
+    with pikepdf.open(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf')) as pdf:
+        page = pdf.pages[page_no]
+        decoder = PdfDecoderForPage(page, page_no)
+        chunks_page = decoder.convert_to_chunks_page()
+
+        print("Title exists:", end=" ")
+        if len(chunks_page.chunks_title) > 0:
+            print("PASSED")
+        else:
+            print("FAILED")
+            exit(1)
+
+        print("Expected title:", expected_title, end=" ")
+        title_foo = chunks_page.title()
+        title = chunks_page.title()
+        if title == expected_title:
+            print("PASSED")
+        else:
+            print("FAILED. Actual title:", title)
+            exit(1)
+
+        for test in headwords:
+            i = test.pos
+            headword = test.expected_headword
+            print(f"Headword {i}:", end=" ")
+            headword1, _ = chunks_page.chunks_paragraphs[i].headword_and_body()
+            if headword1 == headword:
+                print(f"PASSED {headword1}")
+            else:
+                print(f'FAILED. Expected: "{headword}" Actual: "{headword1}"')
+                exit(1)
+
+        print("Number of paragraphs:", end=" ")
+        if len(chunks_page.chunks_paragraphs) == expected_paragraphs:
+            print("PASSED")
+        else:
+            print(f"FAILED. Expected: {expected_paragraphs} Actual: ", len(chunks_page.chunks_paragraphs))
+            exit(1)
+
+
+if __name__ == '__main__':
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description='Парсер за Матицу Српску')
+
+    parser.add_argument('--debug', default=None,
+                        help='Приказивање дебаг информација: --debug page_no:entry_no')
+    parser.add_argument('--progress', action='store_true',
+                        help='Приказивање прогреса')
+    parser.add_argument('--positions', action='store_true',
+                        help='Приказивање позиција у PDF-у')
+    parser.add_argument('--txt', action='store_true',
+                        help='Екстракција свих страна из PDF-а у текстуални фајл')
+    parser.add_argument('--csv', action='store_true',
+                        help='Екстракција свих страна из PDF-а у SCV фајл')
+    parser.add_argument('--json', action='store_true',
+                        help='Екстракција свих страна из PDF-а у JSON фајл')
+    parser.add_argument('--mongodb-connection-string', default=None,
+                        help='Екстракција свих страна из PDF-а у mongodb')
+    parser.add_argument('--firebase-service-account-key-json', default=None,
+                        help='Екстракција свих страна из PDF-а у firebase real-time database')
+
+    args = parser.parse_args()
+
+    debug_progress = args.progress
+
+    convertor = PdfDecoderForFile(os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf'))
+
+    if args.txt:
+        convertor.print_txt()
         exit(0)
+
+    if args.positions:
+        print('Not implemented')
+        exit(1)
+
+    if args.csv:
+        convertor.print_csv()
+        exit(0)
+
+    if args.json:
+        convertor.print_json()
+        exit(0)
+
+    if args.mongodb_connection_string:
+        from pymongo import MongoClient
+
+        convertor.export_mongodb(args.mongodb_connection_string)
+        exit(0)
+
+    if args.firebase_service_account_key_json:
+        import firebase_admin
+
+        convertor.export_firebase(args.firebase_service_account_key_json)
+        exit(0)
+
+    if args.debug:
+        page_no, entry_no_or_headword = args.debug.split(':')
+        convertor.debug_entry(int(page_no), int(entry_no_or_headword))
+        exit(0)
+    #################### TESTST #########################
+    convertor.debug_entry(17, 8)
+    exit(0)
+
+    problem_titles = [154, 660, 772, 774, 796, 1010, 1330]
+
+    test_entries = [
+        Th(0, "надометнути"),
+        Th(40, "надридуховит"),
+    ]
+    test_page_entries(751, "750 НАДОМЕТНУТИ -НАДРИДУХОВИТ", 41, test_entries)
+
+    test_entries = [
+        Th(0, "позитрон"),
+        Th(48, "пој"),
+    ]
+    test_page_entries(944, "ПО3ИТРОН -ПОЈ 943", 49, test_entries)
+
+    test_entries = [
+        Th(0, "подсетник"),
+        Th(61, "подужи"),
+    ]
+    test_page_entries(940, "ПОДСЕТНИК -ПОДУЖИ 939", 62, test_entries)
+
+    test_entries = [
+        Th(0, "галиматијас"),
+        Th(55, "гањивати (се)"),
+    ]
+    test_page_entries(175, "174 ГАЛИМАТИЈАС -ГАЊИВАТИ (СЕ)", 56, test_entries)
+
+    test_entries = [
+        Th(0, "осмак"),
+        Th(53, "основац"),
+    ]
+
+    test_page_entries(878, "ОСМАК -ОСНОВАЦ 877", 54, test_entries)
+
+    test_entries = [
+        Th(0, "задерати"),
+        Th(57, "задоцњивати (се)"),
+    ]
+
+    test_page_entries(374, "ЗАДЕРАТИ -ЗАДОЦЊИВАТИ (СЕ) 373", 58, test_entries)
+
+    test_entries = [
+        Th(0, "зацењивати (се)"),
+        Th(56, "зачеће"),
+    ]
+
+    test_page_entries(408, "ЗАЦЕЊИВАТИ (СЕ)l -ЗА ЧЕЋЕ 407", 57, test_entries)
+
+    test_entries = [
+        Th(0, "затирати (се)"),
+        Th(53, "затрести"),
+    ]
+
+    test_page_entries(404, "3АТИРАТИ(СЕ)-3АТРЕСТИ 403", 54, test_entries)
+
+    test_entries = [
+        Th(0, "заозбиљно"),
+        Th(53, "западно"),
+    ]
+
+    test_page_entries(390, "ЗАОЗБИЉНО -ЗАПАДНО 389", 54, test_entries)
+
+    test_entries = [
+        Th(0, "дiшилац"),
+        Th(45, "дактилоскопија"),
+    ]
+
+    test_page_entries(230, "ДАВИЛАЦ -ДАКТИЛОСКОПИЈА 229", 46, test_entries)
+
+    test_entries = [
+        Th(0, ""),
+        Th(19, "водено"),
+    ]
+
+    test_page_entries(152, "ВОДАН -ВОДЕНО 151", 20, test_entries)
+
+    test_entries = [
+        Th(0, "гарниmна"),
+        Th(52, "гатити"),
+    ]
+    test_page_entries(177, "176 ГАРНИШНА -ГАТИТИ", 53, test_entries)
+
+    test_entries = [
+        Th(0, ""),
+        Th(55, "гвожђурина"),
+    ]
+    test_page_entries(178, "ГАТИЋ -ГВОЖЂУРИНА 177", 56, test_entries)
+
+    test_entries = [
+        Th(0, "гаовица"),
+        Th(47, "гарнитура"),
+    ]
+    test_page_entries(176, "ГАОВИЦА-ГАРНИТУРА 175", 48, test_entries)
+
+    test_entries = [
+        Th(0, "",
+           "свршено, lошово; gосша: - Тако је и амин. 3. (у им. служби) м свршешан:, н:рај: доћи на -. • као - CUlYPHO, заисша, неминовно."),
+        Th(1, "аминати"),
+        Th(49, "амфитеатралан"),
+    ]
+    test_page_chunks(31, "30 АМИНАТИ -АМФИТЕАТРАЛАН", 50, test_entries)
+    test_page_entries(31, "30 АМИНАТИ -АМФИТЕАТРАЛАН", 50, test_entries)
+
+    test_entries = [
+        Th(61, "архијерејскй"),
+    ]
+    test_page_entries(45, "44 АРТИЉЕРИЈСКИ -АРХИЈЕРЕЈСКИ", 62, test_entries)
+
+    test_entries = [
+        Th(0, "а1"),
+        Th(3, "а4"),
+        Th(4, "а-"),
+        Th(5, "абажур"),
+        Th(10, "аберација",
+           "ж лат:l. а. аетр. йривиgна йромена йоложаја звезgа условЈЬена 3емљиним крешањем и брзином ширења свейlло-сШи. б. у ойшици, оgсшуйање йреломљених свейlлосних зракова og ЙОЖеЈЬНОf, Йравца. 2. биол. оgсшуйање og шийичноf, облика. 3. фиг. скрешање, засШрањивање."),
+        Th(15, "аБЕщедни и абецедни"),
+        Th(25, "аболицијСRИ и аболициони"),
+        Th(27, "аболиционист(а)", "-ё м (ми. -сти) йоборник аболиционизма."),
+        Th(28, "аБОЛИЦИОНИСТИЧRИ"),
+        Th(29, "абонент"),
+        Th(30, "абонеНТRиња"),
+    ]
+    test_page_entries(16, "А", 34, test_entries)
+
+    test_entries = [
+        Th(12, "архитектоника"),
+        Th(13, "архитектонички и архитектонични"),
+        Th(58, "асинхронија"),
+    ]
+    test_page_entries(46, "АРХИЛАЖАЦ -АСИНХРОНИЈА 45", 59, test_entries)
+
+    test_entries = [
+    ]
+    test_page_entries(27, "26 АЛЕЛУЈА -АЛКУРАН", 47, test_entries)
+    test_page_chunks(27, "26 АЛЕЛУЈА -АЛКУРАН", 47, test_entries)
+
+    test_entries = [
+        Th(0, "амфитеатрално"),
+        Th(10, "анакрон-"),
+        Th(15, "анализа"),
+        Th(20, "аналист(а)"),
+        Th(25, "аналитичар"),
+        Th(26, "аналитичкй"),
+        Th(27, "аналитички"),
+        Th(28, "аналитичност"),
+        Th(56, "анархичност"),
+    ]
+    test_page_chunks(32, "АМФИТЕАТРАЛНО -АНАРХИЧНОСТ 31", 57, test_entries)
+    test_page_entries(32, "АМФИТЕАТРАЛНО -АНАРХИЧНОСТ 31", 57, test_entries)
 
     test_para = [
         Th(0, "аерорели"),
@@ -1353,7 +1898,32 @@ if __name__ == '__main__':
         Th(28, "ангелика"),
         Th(56, "англофопски"),
     ]
-    # test_page_chunks(33, '32 АНАРХО--АНГЛОФОПСКИ', 57, test_para)
+    test_page_chunks(33, '32 АНАРХО--АНГЛОФОПСКИ', 57, test_para)
+
+    test_entries = [
+        Th(0, ""),
+        Th(47, "вёровати"),
+    ]
+    test_page_entries(133, "132 ВЕРАН -ВЕРОВАТИ", 48, test_entries)
+
+    test_entries = [
+        Th(10, "баздети"),
+        Th(12, "базён"),
+        Th(13, "базенчић"),
+        Th(15, "базирати"),
+        Th(25, "бајалац"),
+        Th(35, "бајацо"),
+        Th(38, "бај-бај"),
+        Th(39, "бај"),
+        Th(40, "бајити"),
+        Th(46, "бајно"),
+    ]
+    test_page_entries(57, "56 БАЖДАРИТИ -БАЈНО", 47, test_entries)
+
+    test_entries = [
+        Th(55, "беседа"),
+    ]
+    test_page_entries(76, "БЕРБАНСКИ -БЕСЕДА 75", 56, test_entries)
 
 #    matica_pdf = os.path.join(os.path.dirname(__file__), 'matica/matica-full.pdf')
 #    with pikepdf.open(matica_pdf) as pdf:
