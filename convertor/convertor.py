@@ -1254,6 +1254,7 @@ class PdfDecoderForFile:
         json.dump(j, sys.stdout, indent=2, ensure_ascii=False)
 
     def export_mongodb(self, connection_string, f=16, t=1528):
+        raise NotImplementedError("MongoDB export is not implemented lookup feature yet")
         client = MongoClient(connection_string)
         db = client.matica
         collection = db.entries

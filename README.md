@@ -18,6 +18,9 @@ The online version of the dictionary is available at [Matica Srpska](https://mat
 Mobile and desktop versions are not yet published anywhere, but they are proven to be working and can be built from
 the source code.
 
+The CLI to parse the dictionary from PDF to JSON, CSV, or TXT is available in the [convertor](https://github.com/s4ysolutions/matica-srpska/blob/main/convertor)
+directory.
+
 # Dictionary origin
 
 The dictionary is based on the 2011 edition of the Matica Srpska dictionary, which is
