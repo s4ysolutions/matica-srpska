@@ -1341,6 +1341,8 @@ fixes = {
         bytes2cid(b'\x00e'): '~',
         # bytes2cid(b'\x00\x0b'): '~', breaks p23. ајурведски -а, -о који се односи на ајурведу: медицина.
         bytes2cid(b'\x00\r'): '~',
+        #bytes2cid(b'\x00\x0b'): '~', ^26:27 2[-зма >-з~а ]
+        #bytes2cid(b'\x00\x0b'): '~', ^18:6 политички~
         bytes2cid(b'\x00\x13'): '~',
         bytes2cid(b'\x00\xb8'): 'и',
         bytes2cid(b'\x00\xd0'): 'и',
@@ -1356,13 +1358,14 @@ fixes = {
         bytes2cid(b'\x00h'): 'к',
         bytes2cid(b'\x00r'): 'к',
         #bytes2cid(b'\x00t'): 'е', # 17:14 [речце: >речцее ],
+        #bytes2cid(b'\x00\x0c'): 'д', # ^16:32 абонос > абондс
+        bytes2cid(b'\x00\x13'): '~',
         bytes2cid(b'\x00\x14'): '~',
         bytes2cid(b'\x00\x7f'): 'д',
         bytes2cid(b'\x00\x83'): 'н',
         bytes2cid(b'\x00\x8f'): 'и',
         bytes2cid(b'\x00\x95'): 'о',
         bytes2cid(b'\x00\x9e'): 'т',
-        bytes2cid(b'\x00\x0c'): 'д',
         bytes2cid(b'\x00\xa2'): '~',
         bytes2cid(b'\x00\xa7'): 'а',
         bytes2cid(b'\x00\xac'): 'л',
@@ -1378,6 +1381,7 @@ fixes = {
         bytes2cid(b'\x02\xa8'): 'лингв',
         bytes2cid(b'\x02\x9f'): 'к',
         bytes2cid(b'\x03\x86'): '.',
+        bytes2cid(b'\x03\x1a'): '',
         bytes2cid(b'\x04l'): 'д',
         bytes2cid(b'\x04\x16'): 'и',
         bytes2cid(b'\x04\x85'): 'и',
@@ -1401,14 +1405,16 @@ fixes = {
         bytes2cid(b'\x00\xbe'): 'в',
         bytes2cid(b'\x01l'): 'д',
         bytes2cid(b'\x01\x02'): 'у',
+        bytes2cid(b'\x06\xdb'): 'и',
 
         # bytes2cid(b'\x00\x07'): '?',
     },
     '/C0_3': {
+        bytes2cid(b'\n%\x05'): 'њ',
+        bytes2cid(b'\n+'): 'о',
         bytes2cid(b'\nP'): 'с',
         bytes2cid(b'\no'): 'у',
         bytes2cid(b'\rh'): 'п',
-        bytes2cid(b'\n+'): 'о',
         bytes2cid(b'\n\x14'): 'н',
         bytes2cid(b'\n\xa4'): 'т',
         bytes2cid(b'\n\xcb'): 'а',
@@ -1430,13 +1436,21 @@ fixes = {
         bytes2cid(b'\x01d'): '1',
         bytes2cid(b'\x02\x13'): '',
         bytes2cid(b'\x04l'): 'н',
+        bytes2cid(b'\x04U'): 'с',
+        bytes2cid(b'\x04\xa0'): 'м',
         bytes2cid(b'\x04\xa4'): 'к',
+        bytes2cid(b'\x04\xb1'): 'м',
+        bytes2cid(b'\x04\xc0'): 'о',
         bytes2cid(b'\x04\xe8'): 'п',
+        #bytes2cid(b'\x04\xe9'): 'у', # ^17:55 дрyгUЈИ дрyгуЈИ
+        bytes2cid(b'\x04\xe9'): 'и', # 17:55 дрyгUЈИ дрyгиЈИ
         bytes2cid(b'\x05m'): 'ал',
+        bytes2cid(b'\x05\x1e'): 'пл', #17:55 ваздуоповни
         bytes2cid(b'\x06\x10'): 'д',
         bytes2cid(b'\x08^'): 'и',  # p21, ајурведски ... односи,
         bytes2cid(b'\x0b\xa8'): 'аљ',  # p21, ајурведски ... односи,
         bytes2cid(b'\x0cP'): 'с',
+        #bytes2cid(b'\x0e\xc4'): '@1',
         bytes2cid(b'\x0f-'): 'р',
         # bytes2cid(b'\x0f\x83'): 'ј',
         # bytes2cid(b'\x0c\xf4'): 'ни',
@@ -1461,11 +1475,14 @@ fixes = {
         bytes2cid(b'\t\xf8'): 'л',
         bytes2cid(b'\x00;'): 'г',
         bytes2cid(b'\x00:'): 'г',
+        bytes2cid(b'\x00x'): 'н',
         bytes2cid(b'\x00y'): '~',
         bytes2cid(b'\x00\t'): 'с',
-        bytes2cid(b'\x00\x12'): '~',
+        # bytes2cid(b'\x00\x12'): '~', ^17:8 [геол. >ге~л. ]
         bytes2cid(b'\x00\x17'): 'г',
+        bytes2cid(b'\x00\xd0'): 'гм',
         bytes2cid(b'\x01_'): 'к',
+        bytes2cid(b'\x01,'): 'и',
         bytes2cid(b'\x02&'): '.',
         bytes2cid(b'\x02\xb8'): '', # 16:9 [. > ]
         bytes2cid(b'\x03O'): 'к',
@@ -1480,12 +1497,14 @@ fixes = {
         bytes2cid(b'\x04\xc0'): 'о',
         bytes2cid(b'\x05I'): 'а',
         bytes2cid(b'\x05o'): 'ам',
+        bytes2cid(b'\x05\x0c'): 'иљ',
         bytes2cid(b'\x05\xb7'): 'в',
         bytes2cid(b'\x05\xf1'): 'гл',
         bytes2cid(b'\x05\xee'): 'г',
         bytes2cid(b'\x05\xeb'): 'г',
         # bytes2cid(b'\x00\x01'): '', #p21 агресивност, -ости {ж}
         bytes2cid(b'\x06<'): 'ћ',
+        bytes2cid(b'\x06L'): 'г',
         bytes2cid(b'\x06\x10'): 'д',
         bytes2cid(b'\x07?'): 'г',
         bytes2cid(b'\x08^'): 'и',
@@ -1493,8 +1512,6 @@ fixes = {
         bytes2cid(b'\x0c\x9a'): 'ељ',
         bytes2cid(b'\x0e\x1e'): 'пл',
         bytes2cid(b'\x10\xd1'): 'т',
-
-
     },
     '/C0_5': {
         bytes2cid(b'\nF'): 'р',
@@ -1517,9 +1534,11 @@ fixes = {
         # bytes2cid(b'\x0b\xe4'): 'љ',
     },
     '/C0_6': {
-        bytes2cid(b'\x00\1b'): '~',
+        # bytes2cid(b'\x00\1b'): '~', ^18:6 [хем. >хем~ ]
+        bytes2cid(b'\x00\01'): '~',
     },
     '/C0_7': {
+        bytes2cid(b'\x00y'): '~',
         bytes2cid(b'\x00\x0b'): '~',
         bytes2cid(b'\x00\x07'): 'л',
         bytes2cid(b'\x001'): 'с',
@@ -1538,7 +1557,7 @@ fixes = {
         # bytes2cid(b'\x00\x04'): 'ц', #!!!!
         #bytes2cid(b'\x00 '): '@1',
         bytes2cid(b'\x00A'): 'и',
-        bytes2cid(b'\x00\t'): 'ијс', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        #bytes2cid(b'\x00\t'): 'ијс', # 16:8 (абдик3.цйјскЙ), >(абдикацски) ^16:1[данас? >данаијс? ],
         bytes2cid(b'\x00\x04'): 'е',
         bytes2cid(b'\x00\x13'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
         #bytes2cid(b'\x00\x1c'): 'ј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
@@ -1547,7 +1566,7 @@ fixes = {
         bytes2cid(b'\x01\x12'): 'и',
         #bytes2cid(b'\x01\x12'): 'а',
         bytes2cid(b'\x021'): 'е',
-        bytes2cid(b'\x02\xcc'): 'ац', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
+        bytes2cid(b'\x02\xcc'): 'ациј', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
         bytes2cid(b'\x03`'): 'д',
 
         #bytes2cid(b'\x00O'): '@2', # 16:8 (абдик3.цйјскЙ), >(абдикацски)
@@ -1719,8 +1738,11 @@ if __name__ == '__main__':
         page_no, entry_no_or_headword = args.debug.split(':')
         convertor.debug_entry(int(page_no), int(entry_no_or_headword))
         exit(0)
+    #################### KNOWN PROBLEMS #########################
+    # [агенс][аге нс]
+    #августовски -3., -о који се односу на август1: ~сунце, ~вру-ћина. 17 35
     #################### TESTST #########################
-    convertor.debug_entry(17, 8)
+    convertor.debug_entry(18, 6)
     exit(0)
 
     problem_titles = [154, 660, 772, 774, 796, 1010, 1330]
