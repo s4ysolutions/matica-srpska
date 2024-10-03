@@ -20,26 +20,51 @@ class DictionaryRTDBProvider implements DictionaryProvider {
     _ref = FirebaseDatabase.instance.ref("entries");
   }
 
+  static String _normalize(String s) {
+    return s.replaceAll(' ', '').toLowerCase();
+  }
+
   @override
   Future<List<DictionaryEntry>> getEntriesByHeadwordBegin(
       String pattern) async {
     if (pattern.isEmpty) {
       return [];
     }
-    final event =
-        await _ref.orderByChild("headword").startAt(pattern).limitToFirst(10).once();
+    String lookupPattern = _normalize(pattern);
+    final event = await _ref
+        .orderByChild("lookup")
+        .startAt(lookupPattern)
+        .limitToFirst(25)
+        .once();
     final snapshot = event.snapshot;
     final results = <DictionaryEntry>[];
     if (snapshot.value != null) {
-      final entries = Map<String, dynamic>.from(snapshot.value as Map);
-      entries.forEach((key, value) {
-        String headword = value["headword"];
-        if (headword.startsWith(pattern)) {
-          results.add(DictionaryEntry(headword: headword, definition: value["definition"]));
+      var value = snapshot.value;
+      List<Map> entries = [];
+      if (value is List) {
+        entries = List<Map>.from(value);
+      } else if (value is Map) {
+        entries = List<Map>.from(value.values);
+      } else {
+        return [];
+      }
+      entries.forEach((value) {
+        String headword = value["headword"] as String;
+        String definition = value["definition"] as String;
+        String lookup = _normalize(headword + definition);
+        if (lookup.startsWith(lookupPattern)) {
+          results
+              .add(DictionaryEntry(headword: headword, definition: definition));
         }
       });
     }
-    results.sort((a,b) => a.headword.compareTo(b.headword));
+
+    results.sort((a, b) {
+      String aKey = (a.headword + a.definition).replaceAll(' ', '');
+      String bKey = (b.headword + b.definition).replaceAll(' ', '');
+      return aKey.compareTo(bKey);
+    });
+
     return results;
   }
 
