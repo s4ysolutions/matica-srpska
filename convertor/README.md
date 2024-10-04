@@ -31,10 +31,14 @@ python convertor/convertor.py --csv --progress > /path/to/output.csv
 
 The tool is used to upload the dictionary to the firebase database. The service account key json file
 is required for this. This option is not recommended due to the slow upload, but it is used internally.
-Import JSON to Firebase is the recommended way to upload the dictionary to the firebase database.
 
 ```shell
 python --firebase-service-account-key-json /path/to/service-account-key.json
+```
+
+Import JSON to Firebase is the recommended way to upload the dictionary to the firebase database.
+```shell
+python convertor/convertor.py --json-lookup > /path/to/output.json
 ```
 
 ## Fixing decoding errors

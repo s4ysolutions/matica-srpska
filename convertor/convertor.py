@@ -1223,33 +1223,26 @@ class PdfDecoderForFile:
         print("headword\tdefinition\tpage\tpara")
         self.each(lambda entry: print(entry.txt('\t')), f, t)
 
-    def print_json(self, f=16, t=1528):
+    def print_json(self, f=16, t=1528, lookup = False):
         json_key = 0
         j = {}
 
         def process_entries_json(entry):
             nonlocal json_key
-            j[json_key] = {
-                "headword": entry.headword,
-                "definition": entry.definition,
-                "page": entry.page_no
-            }
+            if lookup:
+                j[json_key] = {
+                    "headword": entry.headword,
+                    "definition": entry.definition,
+                    "page": entry.page_no,
+                    'lookup': ''.join((entry.headword + entry.definition).lower().split())
+                }
+            else:
+                j[json_key] = {
+                    "headword": entry.headword,
+                    "definition": entry.definition,
+                    "page": entry.page_no,
+                }
             json_key += 1
-
-        #        def process_entries_json(entry):
-        #            nonlocal json_key
-        #            if json_key > 0:
-        #                print(",")
-        #            m = {json_key: {
-        #                "headword": entry.headword,
-        #                "definition": entry.definition,
-        #                "page": entry.page_no
-        #            }}
-        #            print(json.dumps(m, indent=4, ensure_ascii=False), end="")
-        #            json_key += 1
-        # print("{")
-        # self.each(process_entries_json, args.debug)
-        # print("}")
         self.each(process_entries_json, f, t)
         json.dump(j, sys.stdout, indent=2, ensure_ascii=False)
 
@@ -1703,6 +1696,8 @@ if __name__ == '__main__':
                         help='Екстракција свих страна из PDF-а у SCV фајл')
     parser.add_argument('--json', action='store_true',
                         help='Екстракција свих страна из PDF-а у JSON фајл')
+    parser.add_argument('--json-lookup', action='store_true',
+                        help='Екстракција свих страна из PDF-а у JSON фајл са lookup poljem')
     parser.add_argument('--mongodb-connection-string', default=None,
                         help='Екстракција свих страна из PDF-а у mongodb')
     parser.add_argument('--firebase-service-account-key-json', default=None,
@@ -1728,6 +1723,10 @@ if __name__ == '__main__':
 
     if args.json:
         convertor.print_json()
+        exit(0)
+
+    if args.json_lookup:
+        convertor.print_json(lookup=True)
         exit(0)
 
     if args.mongodb_connection_string:
