@@ -1,5 +1,6 @@
 import json
 import os
+import string
 from typing import List
 
 import pikepdf
@@ -1216,14 +1217,33 @@ class PdfDecoderForFile:
 
         self.each(lmbd, page_no, page_no)
 
+    _lookup_translator = str.maketrans('', '', string.punctuation)
+
+    @staticmethod
+    def lookup_translator(s):
+        return s.replace(' ', '').translate(PdfDecoderForFile._lookup_translator).lower()
+
     def print_txt(self, f=16, t=1528):
-        self.each(lambda entry: print(entry.txt()), f, t)
+        def lmbda(entry):
+            txt = entry.txt()
+            print(txt)
 
-    def print_csv(self, f=16, t=1528):
-        print("headword\tdefinition\tpage\tpara")
-        self.each(lambda entry: print(entry.txt('\t')), f, t)
+        self.each(lmbda, f, t)
 
-    def print_json(self, f=16, t=1528, lookup = False):
+    def print_csv(self, f=16, t=1528, lookup=False):
+        def lmbda(entry):
+            txt = entry.txt('\t')
+            if lookup:
+                txt += f"\t{self.lookup_translator(entry.headword + entry.definition)}"
+            print(txt)
+
+        if lookup:
+            print("headword\tdefinition\tpage\tpara\tlookup")
+        else:
+            print("headword\tdefinition\tpage\tpara")
+        self.each(lmbda, f, t)
+
+    def print_json(self, f=16, t=1528, lookup=False):
         json_key = 0
         j = {}
 
@@ -1234,7 +1254,7 @@ class PdfDecoderForFile:
                     "headword": entry.headword,
                     "definition": entry.definition,
                     "page": entry.page_no,
-                    'lookup': ''.join((entry.headword + entry.definition).lower().split())
+                    'lookup': self.lookup_translator(entry.headword + entry.definition)
                 }
             else:
                 j[json_key] = {
@@ -1243,6 +1263,7 @@ class PdfDecoderForFile:
                     "page": entry.page_no,
                 }
             json_key += 1
+
         self.each(process_entries_json, f, t)
         json.dump(j, sys.stdout, indent=2, ensure_ascii=False)
 
@@ -1321,7 +1342,8 @@ class PdfDecoderForFile:
                 {'headword': entry.headword,
                  'definition': entry.definition,
                  'page': entry.page_no,
-                 'lookup': ''.join((entry.headword + entry.definition).lower().split())})
+                 'lookup': self.lookup_translator(entry.headword + entry.definition)
+                 })
 
             key += 1
             # end_time = time.time()
@@ -1694,6 +1716,8 @@ if __name__ == '__main__':
                         help='Екстракција свих страна из PDF-а у текстуални фајл')
     parser.add_argument('--csv', action='store_true',
                         help='Екстракција свих страна из PDF-а у SCV фајл')
+    parser.add_argument('--csv-lookup', action='store_true',
+                        help='Екстракција свих страна из PDF-а у SCV фајл са lookup poljem')
     parser.add_argument('--json', action='store_true',
                         help='Екстракција свих страна из PDF-а у JSON фајл')
     parser.add_argument('--json-lookup', action='store_true',
@@ -1721,6 +1745,10 @@ if __name__ == '__main__':
         convertor.print_csv()
         exit(0)
 
+    if args.csv_lookup:
+        convertor.print_csv(lookup=True)
+        exit(0)
+
     if args.json:
         convertor.print_json()
         exit(0)
@@ -1745,9 +1773,6 @@ if __name__ == '__main__':
         page_no, entry_no_or_headword = args.debug.split(':')
         convertor.debug_entry(int(page_no), int(entry_no_or_headword))
         exit(0)
-    #################### KNOWN PROBLEMS #########################
-    # [агенс][аге нс]
-    # августовски -3., -о који се односу на август1: ~сунце, ~вру-ћина. 17 35
     #################### TESTST #########################
     convertor.debug_entry(18, 6)
     exit(0)
