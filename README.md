@@ -21,6 +21,14 @@ the source code.
 The CLI to parse the dictionary from PDF to JSON, CSV, or TXT is available in the [convertor](https://github.com/s4ysolutions/matica-srpska/blob/main/convertor)
 directory.
 
+### TODO:
+ **A tool for community to fix the errors in the dictionary.**
+
+ - [ ] Create a database of the raw data read from the PDF: chunks, positions, and the mappings.
+ - [ ] Create an API to read the data from the database.
+ - [ ] Create an API to modify the mappings.
+ - [ ] Create a Web UI to modify the mappings.
+
 # Dictionary origin
 
 The dictionary is based on the 2011 edition of the Matica Srpska dictionary, which is
@@ -64,7 +72,22 @@ Provider's Consumer widget of the presentation layer to [listen for search resul
 
 ## Known issues
 
- - Error handling is not consistent across the application mainly due to Flutter limitations in handling errors in the
+- Error handling is not consistent across the application mainly due to Flutter limitations in handling errors in the
 non-waited Futures. Sometimes the error just passed to the [default error handler](https://github.com/s4ysolutions/matica-srpska/blob/37916868bdc829e6adaada5cc8ab3cd311e80752/flutter/lib/main.dart#L16),
  and sometimes they are catched and forced to be [routed to that handler](
    https://github.com/s4ysolutions/matica-srpska/blob/37916868bdc829e6adaada5cc8ab3cd311e80752/flutter/lib/flutter/ui/homePage/search_field.dart#L24).
+
+- Dictionary errors
+    - *extra spaces*
+       - [ ] [агенс][аге нс]
+    - *suspicious titles:*
+       - [ ] Page: 154 1,
+       - [ ] Page: 171 r
+       - [ ] Page: 229 д~
+       - [ ] Page: 499 к (1\) с непром. лингв. а. безвучни задњонеuчани ексй.лозивни
+       - [ ] Page: 660 !
+       - [ ] Page: 772 "
+       - [ ] Page: 774 Ј'
+       - [ ] Page: 796 ' ..
+       - [ ] Page: 1010 l
+       - [ ] Page: 1330 Ћ
