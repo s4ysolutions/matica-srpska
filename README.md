@@ -24,7 +24,7 @@ directory.
 ### TODO:
  **A tool for community to fix the errors in the dictionary.**
 
- - [ ] if a first word followed by space another word and comma then most probably these to words
+ - [ ] if a first word followed by space, another word and comma then most probably these to words
        need to be combained at onc (false space) and form a headword
  - [ ] Create a database of the raw data read from the PDF: chunks, positions, and the mappings.
  - [ ] Create an API to read the data from the database.
