@@ -53,9 +53,9 @@ Building for iOS causes the build error which is fixed by the following solution
 
 ## Features
 
-The application is developed in Flutter and Dart, and it is available for Mac, Windows(unchecked), Android, iOS, and Web.
+The UI application is developed in Flutter and Dart, and it is available for Mac, Windows(unchecked), Android, iOS, and Web.
 
-Currently, there are 2 backends supported: MongoDB(is not available for Web) and Firebase.
+Currently, there are 2 backends supported: Firebase realtime database and experemental MongoDB(is not available for Web).
 
 The architecture follows the Clean Architecture principles:
 
